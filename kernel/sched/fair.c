@@ -22,6 +22,8 @@
  */
 #include "sched.h"
 
+#include <trace/hooks/sched.h>
+
 /*
  * Targeted preemption latency for CPU-bound tasks:
  *
@@ -6768,8 +6770,14 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int wake_flags)
 	int cpu = smp_processor_id();
 	int new_cpu = prev_cpu;
 	int want_affine = 0;
+	int target_cpu = -1;
 	/* SD_flags and WF_flags share the first nibble */
 	int sd_flag = wake_flags & 0xF;
+
+	trace_android_rvh_select_task_rq_fair(p, prev_cpu, sd_flag,
+			wake_flags, &target_cpu);
+	if (target_cpu >= 0)
+		return target_cpu;
 
 	if (wake_flags & WF_TTWU) {
 		record_wakee(p);
