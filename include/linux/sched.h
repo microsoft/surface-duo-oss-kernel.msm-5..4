@@ -35,6 +35,7 @@
 #include <linux/rseq.h>
 #include <linux/seqlock.h>
 #include <linux/kcsan.h>
+#include <linux/android_vendor.h>
 #include <asm/kmap_size.h>
 
 /* task_struct member predeclarations (sorted alphabetically): */
@@ -1363,6 +1364,7 @@ struct task_struct {
 					__mce_reserved : 62;
 	struct callback_head		mce_kill_me;
 #endif
+	ANDROID_VENDOR_DATA_ARRAY(1, 2);
 
 #ifdef CONFIG_KRETPROBES
 	struct llist_head               kretprobe_instances;
