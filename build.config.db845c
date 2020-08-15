@@ -1,6 +1,7 @@
 . ${ROOT_DIR}/common/build.config.common
 . ${ROOT_DIR}/common/build.config.aarch64
 
+BUILD_INITRAMFS=1
 DEFCONFIG=db845c_gki_defconfig
 PRE_DEFCONFIG_CMDS="cat ./common/arch/arm64/configs/gki_defconfig ./common/arch/arm64/configs/db845c_gki.fragment > ./common/arch/arm64/configs/${DEFCONFIG};"
 POST_DEFCONFIG_CMDS="rm ./common/arch/arm64/configs/${DEFCONFIG}"
