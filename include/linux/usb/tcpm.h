@@ -104,6 +104,14 @@ enum tcpm_transmit_type {
  *		is supported by TCPC, set this callback for TCPM to query
  *		whether vbus is at VSAFE0V when needed.
  *		Returns true when vbus is at VSAFE0V, false otherwise.
+ * @check_contaminant:
+ *		Optional; The callback is called when CC pins report open status
+ *		at the end of the toggling period. Chip level drivers are
+ *		expected to check for contaminant and re-enable toggling if
+ *		needed. When 0 is not returned, check_contaminant is expected to
+ *		restart toggling after checking the connector for contaminant.
+ *		This forces the TCPM state machine to tranistion to TOGGLING state
+ *		without calling start_toggling callback.
  */
 struct tcpc_dev {
 	struct fwnode_handle *fwnode;
@@ -135,6 +143,7 @@ struct tcpc_dev {
 	int (*set_auto_vbus_discharge_threshold)(struct tcpc_dev *dev, enum typec_pwr_opmode mode,
 						 bool pps_active, u32 requested_vbus_voltage);
 	bool (*is_vbus_vsafe0v)(struct tcpc_dev *dev);
+	int (*check_contaminant)(struct tcpc_dev *dev);
 };
 
 struct tcpm_port;
@@ -152,5 +161,6 @@ void tcpm_pd_transmit_complete(struct tcpm_port *port,
 			       enum tcpm_transmit_status status);
 void tcpm_pd_hard_reset(struct tcpm_port *port);
 void tcpm_tcpc_reset(struct tcpm_port *port);
+bool tcpm_is_debouncing(struct tcpm_port *tcpm);
 
 #endif /* __LINUX_USB_TCPM_H */
