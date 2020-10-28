@@ -1364,7 +1364,7 @@ struct task_struct {
 					__mce_reserved : 62;
 	struct callback_head		mce_kill_me;
 #endif
-	ANDROID_VENDOR_DATA_ARRAY(1, 2);
+	ANDROID_VENDOR_DATA_ARRAY(1, 64);
 
 #ifdef CONFIG_KRETPROBES
 	struct llist_head               kretprobe_instances;
