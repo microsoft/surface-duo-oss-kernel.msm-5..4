@@ -19,6 +19,7 @@
 #include <trace/hooks/wqlockup.h>
 #include <trace/hooks/debug.h>
 #include <trace/hooks/printk.h>
+#include <trace/hooks/epoch.h>
 
 /*
  * Export tracepoints that act as a bare tracehook (ie: have no trace event
@@ -60,3 +61,5 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_ipi_stop);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_dump_throttled_rt_tasks);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_printk_hotplug);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_jiffies_update);
+EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_show_suspend_epoch_val);
+EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_show_resume_epoch_val);
