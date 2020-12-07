@@ -8376,6 +8376,8 @@ static void cpu_cgroup_attach(struct cgroup_taskset *tset)
 
 	cgroup_taskset_for_each(task, css, tset)
 		sched_move_task(task);
+
+	trace_android_rvh_cpu_cgroup_attach(tset);
 }
 
 #ifdef CONFIG_UCLAMP_TASK_GROUP
