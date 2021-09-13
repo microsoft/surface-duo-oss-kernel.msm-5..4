@@ -1164,6 +1164,19 @@ int dwc3_core_init(struct dwc3 *dwc)
 		dwc3_writel(dwc->regs, DWC3_GUCTL1, reg);
 	}
 
+	/* Force Gen1 speed on Gen2 controller if "force_gen1" is present */
+	if (dwc->force_gen1) {
+		reg = dwc3_readl(dwc->regs, DWC3_LLUCTL(0));
+		reg |= DWC3_FORCE_GEN1;
+		dwc3_writel(dwc->regs, DWC3_LLUCTL(0), reg);
+
+		if (dwc->dual_port) {
+			reg = dwc3_readl(dwc->regs, DWC3_LLUCTL(1));
+			reg |= DWC3_FORCE_GEN1;
+			dwc3_writel(dwc->regs, DWC3_LLUCTL(1), reg);
+		}
+	}
+
 	return 0;
 
 err3:
@@ -1437,6 +1450,8 @@ static void dwc3_get_properties(struct dwc3 *dwc)
 				"snps,usb3_lpm_capable");
 	dwc->usb2_lpm_disable = device_property_read_bool(dev,
 				"snps,usb2-lpm-disable");
+	dwc->usb2_gadget_lpm_disable = device_property_read_bool(dev,
+				"snps,usb2-gadget-lpm-disable");
 	device_property_read_u8(dev, "snps,rx-thr-num-pkt-prd",
 				&rx_thr_num_pkt_prd);
 	device_property_read_u8(dev, "snps,rx-max-burst-prd",
@@ -1523,6 +1538,8 @@ static void dwc3_get_properties(struct dwc3 *dwc)
 
 	dwc->dis_split_quirk = device_property_read_bool(dev,
 				"snps,dis-split-quirk");
+
+	dwc->force_gen1 = device_property_read_bool(dev, "snps,force-gen1");
 
 	dwc->lpm_nyet_threshold = lpm_nyet_threshold;
 	dwc->tx_de_emphasis = tx_de_emphasis;
