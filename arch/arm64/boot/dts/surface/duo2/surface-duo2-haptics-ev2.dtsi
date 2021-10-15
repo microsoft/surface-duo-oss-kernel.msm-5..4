@@ -1,0 +1,61 @@
+/*
+ * Copyright (c) 2020 Microsoft Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
+ */
+
+/*
+ * haptics overlay for EV2
+ * NOTE: This is meant to overlay the existing surface-duo2-haptics.dtsi file, which
+ *       is included in surface-duo2-common.dtsi
+ */
+&pm8350b_haptics {
+	/* EV2 LRA has a frequency of 163Hz */
+	qcom,lra-period-us = <6135>;
+	qcom,vmax-mv = <3050>;
+
+	effect_0 {
+		/* CLICK */
+		qcom,wf-vmax-mv = <9000>;
+		qcom,wf-pattern-period-us = <6135>;
+		qcom,wf-pattern-preload;
+		qcom,wf-auto-res-disable;
+	};
+
+	effect_1 {
+		/* DOUBLE CLICK */
+		qcom,wf-vmax-mv = <10000>;
+		qcom,wf-pattern-period-us = <6135>;
+		qcom,wf-auto-res-disable;
+	};
+
+	effect_2 {
+		/* TICK */
+		qcom,wf-vmax-mv = <4500>;
+		qcom,wf-pattern-period-us = <6135>;
+		qcom,wf-auto-res-disable;
+	};
+
+	effect_3 {
+		/* THUD */
+		qcom,wf-vmax-mv = <10000>;
+		qcom,wf-pattern-period-us = <6135>;
+		qcom,wf-auto-res-disable;
+	};
+
+	effect_4 {
+		/* POP */
+		qcom,wf-vmax-mv = <6000>;
+		qcom,wf-pattern-period-us = <6135>;
+		qcom,wf-auto-res-disable;
+	};
+
+	effect_5 {
+		/* HEAVY CLICK */
+		qcom,wf-vmax-mv = <10000>;
+		qcom,wf-pattern-period-us = <6135>;
+		qcom,wf-auto-res-disable;
+	};
+};
