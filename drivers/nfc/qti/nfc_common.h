@@ -25,6 +25,7 @@
 #include <linux/nfcinfo.h>
 #include <linux/regulator/consumer.h>
 #include <linux/ipc_logging.h>
+#include <linux/timer.h>
 #include "nfc_i2c_drv.h"
 #include "nfc_i3c_drv.h"
 
@@ -234,12 +235,19 @@ struct nfc_dev {
 	struct platform_ldo ldo;
 	struct cold_reset cold_reset;
 	struct regulator *reg;
+	struct regulator *pmuvcc_1_reg;
+	struct regulator *pmuvcc_2_reg;
+	struct regulator *i2c_data_scl_reg;
 
 	/* read buffer*/
 	size_t kbuflen;
 	u8 *kbuf;
 
 	union nqx_uinfo nqx_info;
+
+	int nfc_i2c_w_error_cnt;
+	int nfc_i2c_r_error_cnt;
+	struct timer_list cn_nfc_timer;
 
 	void *ipcl;
 

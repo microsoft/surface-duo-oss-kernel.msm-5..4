@@ -726,7 +726,8 @@ static int spi_geni_lock_bus(struct spi_master *spi)
 			dmaengine_submit(mas->gsi_lock_unlock->tx_desc);
 	dma_async_issue_pending(mas->tx);
 
-	timeout = wait_for_completion_timeout(&mas->tx_cb,
+	// MSCHANGE: make wait_for_completion interruptible
+	timeout = wait_for_completion_interruptible_timeout(&mas->tx_cb,
 					msecs_to_jiffies(SPI_XFER_TIMEOUT_MS));
 	if (timeout <= 0) {
 		GENI_SE_ERR(mas->ipc, true, mas->dev,
@@ -783,7 +784,8 @@ static void spi_geni_unlock_bus(struct spi_master *spi)
 			dmaengine_submit(mas->gsi_lock_unlock->tx_desc);
 	dma_async_issue_pending(mas->tx);
 
-	timeout = wait_for_completion_timeout(&mas->tx_cb,
+	// MSCHANGE: make wait_for_completion interruptible
+	timeout = wait_for_completion_interruptible_timeout(&mas->tx_cb,
 					msecs_to_jiffies(SPI_XFER_TIMEOUT_MS));
 	if (timeout <= 0) {
 		GENI_SE_ERR(mas->ipc, true, mas->dev,
@@ -1579,13 +1581,15 @@ static void handle_fifo_timeout(struct spi_master *spi,
 
 	/* Ensure cmd cancel is written */
 	mb();
-	timeout = wait_for_completion_timeout(&mas->xfer_done, HZ);
+	// MSCHANGE: make wait_for_completion interruptible
+	timeout = wait_for_completion_interruptible_timeout(&mas->xfer_done, HZ);
 	if (!timeout) {
 		reinit_completion(&mas->xfer_done);
 		geni_abort_m_cmd(mas->base);
 		/* Ensure cmd abort is written */
 		mb();
-		timeout = wait_for_completion_timeout(&mas->xfer_done,
+		// MSCHANGE: make wait_for_completion interruptible
+		timeout = wait_for_completion_interruptible_timeout(&mas->xfer_done,
 								HZ);
 		if (!timeout)
 			dev_err(mas->dev,
@@ -1597,8 +1601,9 @@ dma_unprep:
 			reinit_completion(&mas->xfer_done);
 			writel_relaxed(1, mas->base +
 				SE_DMA_TX_FSM_RST);
+			// MSCHANGE: make wait_for_completion interruptible
 			timeout =
-			wait_for_completion_timeout(&mas->xfer_done, HZ);
+			wait_for_completion_interruptible_timeout(&mas->xfer_done, HZ);
 			if (!timeout)
 				dev_err(mas->dev,
 					"DMA TX RESET failed\n");
@@ -1609,8 +1614,9 @@ dma_unprep:
 			reinit_completion(&mas->xfer_done);
 			writel_relaxed(1, mas->base +
 				SE_DMA_RX_FSM_RST);
+			// MSCHANGE: make wait_for_completion interruptible
 			timeout =
-			wait_for_completion_timeout(&mas->xfer_done, HZ);
+			wait_for_completion_interruptible_timeout(&mas->xfer_done, HZ);
 			if (!timeout)
 				dev_err(mas->dev,
 					"DMA RX RESET failed\n");
@@ -1674,7 +1680,8 @@ static int spi_geni_transfer_one(struct spi_master *spi,
 
 		if (spi->slave)
 			mas->slave_state = true;
-		timeout = wait_for_completion_timeout(&mas->xfer_done,
+		// MSCHANGE: make wait_for_completion interruptible
+		timeout = wait_for_completion_interruptible_timeout(&mas->xfer_done,
 					xfer_timeout);
 		if (spi->slave)
 			mas->slave_state = false;
@@ -1718,8 +1725,9 @@ static int spi_geni_transfer_one(struct spi_master *spi,
 			int i;
 
 			for (i = 0 ; i < mas->num_tx_eot; i++) {
+				// MSCHANGE: make wait_for_completion interruptible
 				timeout =
-				wait_for_completion_timeout(
+				wait_for_completion_interruptible_timeout(
 					&mas->tx_cb, xfer_timeout);
 				if (timeout <= 0) {
 					GENI_SE_ERR(mas->ipc, true, mas->dev,
@@ -1729,8 +1737,9 @@ static int spi_geni_transfer_one(struct spi_master *spi,
 				}
 			}
 			for (i = 0 ; i < mas->num_rx_eot; i++) {
+				// MSCHANGE: make wait_for_completion interruptible
 				timeout =
-				wait_for_completion_timeout(
+				wait_for_completion_interruptible_timeout(
 					&mas->rx_cb, xfer_timeout);
 				if (timeout <= 0) {
 					GENI_SE_ERR(mas->ipc, true, mas->dev,

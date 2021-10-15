@@ -17,6 +17,7 @@
 #include <linux/pm_opp.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
+#include <linux/sysfs.h> //MSCHANGE, for eliminating lockdep() warning message
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/dcvsh.h>
@@ -343,6 +344,9 @@ static int qcom_cpufreq_hw_cpu_init(struct cpufreq_policy *policy)
 		c->is_irq_requested = true;
 		writel_relaxed(0x0, c->base + offsets[REG_INTR_CLR]);
 		c->is_irq_enabled = true;
+		//MSCHANGE Start, for eliminating lockdep() warning message
+		sysfs_attr_init(&c->freq_limit_attr.attr);
+		//MSCHANGE End
 		c->freq_limit_attr.attr.name = "dcvsh_freq_limit";
 		c->freq_limit_attr.show = dcvsh_freq_limit_show;
 		c->freq_limit_attr.attr.mode = 0444;
