@@ -8,6 +8,87 @@
 #include <linux/delay.h>
 #include "nfc_common.h"
 
+#include <linux/skbuff.h>
+#include <linux/slab.h>
+#include <linux/timer.h>
+#include <linux/connector.h>
+
+#if IS_ENABLED(CONFIG_NFC_SURFACE_I2C_TELEMETRY)
+#define NFC_TIMER_INTERVAL_MSECS 1000*60*30u
+static struct cb_id cn_nfc_id = { CN_NETLINK_USERS + 3, 0x456 };
+static char cn_nfc_name[] = "cn_nfc";
+static u32 cn_nfc_timer_counter;
+
+static void nfc_cn_dbg_cb(struct cn_msg *msg, struct netlink_skb_parms *nsp)
+{
+	pr_debug("%s: %lu: idx=%x, val=%x, seq=%u, ack=%u, len=%d: %s.\n",
+	        __func__, jiffies, msg->id.idx, msg->id.val,
+	        msg->seq, msg->ack, msg->len,
+	        msg->len ? (char *)msg->data : "");
+}
+
+static void nfc_cn_nfc_timer_func(struct timer_list *nfc_cn_timer)
+{
+	struct cn_msg *m;
+	char data[32];
+	struct nfc_dev *nfc_dev = container_of(nfc_cn_timer, struct nfc_dev, cn_nfc_timer);
+
+	pr_debug("%s: timer (%d) fired\n", __func__, cn_nfc_timer_counter);
+
+	m = kzalloc(sizeof(*m) + sizeof(data), GFP_ATOMIC);
+	if (m) {
+
+		memcpy(&m->id, &cn_nfc_id, sizeof(m->id));
+		m->seq = cn_nfc_timer_counter;
+		m->len = sizeof(data);
+
+		m->len =
+		    scnprintf(data, sizeof(data), "write errors = %u read errors = %u",
+			      nfc_dev->nfc_i2c_w_error_cnt, nfc_dev->nfc_i2c_r_error_cnt) + 1;
+
+		memcpy(m + 1, data, m->len);
+
+		cn_netlink_send(m, 0, 0, GFP_ATOMIC);
+		kfree(m);
+	}
+
+	cn_nfc_timer_counter++;
+
+	mod_timer(&cn_nfc_timer, jiffies + msecs_to_jiffies(NFC_TIMER_INTERVAL_MSECS));
+}
+
+static int nfc_cn_init(struct nfc_dev *nfc_dev)
+{
+	int err;
+
+	err = cn_add_callback(&cn_nfc_id, cn_nfc_name, nfc_cn_dbg_cb);
+	if (err)
+		return err;
+	cn_nfc_id.val++;
+	err = cn_add_callback(&cn_nfc_id, cn_nfc_name, nfc_cn_dbg_cb);
+	if (err) {
+		cn_del_callback(&cn_nfc_id);
+		return err;
+	}
+
+	timer_setup(&nfc_dev->cn_nfc_timer, nfc_cn_nfc_timer_func, 0);
+	mod_timer(&nfc_dev->cn_nfc_timer, jiffies + msecs_to_jiffies(NFC_TIMER_INTERVAL_MSECS));
+
+	pr_debug("%s initialized with id={%u.%u}\n",
+		__func__, cn_nfc_id.idx, cn_nfc_id.val);
+
+	return 0;
+}
+
+static void nfc_cn_fini(struct nfc_dev *nfc_dev)
+{
+	del_timer_sync(&nfc_dev->cn_nfc_timer);
+	cn_del_callback(&cn_nfc_id);
+	cn_nfc_id.val--;
+	cn_del_callback(&cn_nfc_id);
+}
+
+#endif // CONFIG_NFC_SURFACE_I2C_TELEMETRY
 
 int nfc_parse_dt(struct device *dev, struct platform_gpio *nfc_gpio,
 		 struct platform_ldo *ldo, uint8_t interface)
@@ -107,6 +188,32 @@ int nfc_ldo_vote(struct nfc_dev *nfc_dev)
 	return ret;
 }
 
+static int nfc_ldo_vote_other_regulators(struct nfc_dev *nfc_dev, struct regulator *reg, char *name)
+{
+	int ret;
+
+	ret =  regulator_set_voltage(reg,
+			nfc_dev->ldo.vdd_levels[0],
+			nfc_dev->ldo.vdd_levels[1]);
+	if (ret < 0) {
+		pr_err("%s: %s set voltage failed\n", __func__, name);
+		return ret;
+	}
+
+	/* pass expected current from NFC in uA */
+	ret = regulator_set_load(reg, nfc_dev->ldo.max_current);
+	if (ret < 0) {
+		pr_err("%s: %s set load failed\n", __func__, name);
+		return ret;
+	}
+
+	ret = regulator_enable(reg);
+	if (ret < 0)
+		pr_err("%s: %s regulator_enable failed\n", __func__, name);
+
+	return ret;
+}
+
 /**
  * nfc_ldo_config()
  * @dev: device instance to read DT entry
@@ -121,6 +228,11 @@ int nfc_ldo_config(struct device *dev, struct nfc_dev *nfc_dev)
 {
 	int ret;
 
+	if (!of_parse_phandle(dev->of_node, NFC_LDO_SUPPLY_NAME, 0)) {
+		pr_err("%s: Unable to find %s regulator, assuming enabled\n",
+			 __func__, NFC_LDO_SUPPLY_NAME);
+		return 0;
+	}
 	if (of_get_property(dev->of_node, NFC_LDO_SUPPLY_NAME, NULL)) {
 		// Get the regulator handle
 		nfc_dev->reg = regulator_get(dev, NFC_LDO_SUPPLY_DT_NAME);
@@ -145,6 +257,32 @@ int nfc_ldo_config(struct device *dev, struct nfc_dev *nfc_dev)
 		regulator_put(nfc_dev->reg);
 	}
 	return ret;
+}
+
+static void nfc_ldo_config_other_regulators(struct nfc_dev *nfc_dev)
+{
+	int ret;
+	struct device *dev = &(nfc_dev->i2c_dev.client->dev);
+
+	pr_debug("%s trying to get regulator ms,nq-i2cdatascl\n", __func__);
+	if (of_get_property(dev->of_node, "ms,nq-i2cdatascl-supply", NULL)) {
+		// Get the regulator handle
+		nfc_dev->i2c_data_scl_reg = regulator_get(dev, "ms,nq-i2cdatascl");
+		if (IS_ERR(nfc_dev->i2c_data_scl_reg)) {
+			ret = PTR_ERR(nfc_dev->i2c_data_scl_reg);
+			nfc_dev->i2c_data_scl_reg = NULL;
+			pr_err("%s: regulator_get failed for regulator %s, ret = %d\n",
+				__func__, "ms,nq-i2cdatascl", ret);
+			return;
+		}
+	} else {
+		nfc_dev->i2c_data_scl_reg = NULL;
+		pr_err("%s: %s regulator entry not present\n", __func__, "ms,nq-i2cdatascl");
+		// return success as it's optional to configure LDO
+		return;
+	}
+
+	nfc_ldo_vote_other_regulators(nfc_dev, nfc_dev->i2c_data_scl_reg, "ms,nq-i2cdatascl");
 }
 
 /**
@@ -188,7 +326,7 @@ void gpio_set_ven(struct nfc_dev *nfc_dev, int value)
 	if (gpio_get_value(nfc_dev->gpio.ven) != value) {
 		gpio_set_value(nfc_dev->gpio.ven, value);
 		// hardware dependent delay
-		usleep_range(10000, 10100);
+		usleep_range(100000, 101000);
 	}
 }
 
@@ -250,6 +388,10 @@ void nfc_misc_remove(struct nfc_dev *nfc_dev, int count)
 	unregister_chrdev_region(nfc_dev->devno, count);
 	if (nfc_dev->ipcl)
 		ipc_log_context_destroy(nfc_dev->ipcl);
+#if IS_ENABLED(CONFIG_NFC_SURFACE_I2C_TELEMETRY)
+	nfc_cn_fini();
+#endif
+
 }
 
 int nfc_misc_probe(struct nfc_dev *nfc_dev,
@@ -305,6 +447,10 @@ int nfc_misc_probe(struct nfc_dev *nfc_dev,
 	nfc_dev->cold_reset.rsp_pending = false;
 	nfc_dev->cold_reset.is_nfc_enabled = false;
 	init_waitqueue_head(&nfc_dev->cold_reset.read_wq);
+
+#if IS_ENABLED(CONFIG_NFC_SURFACE_I2C_TELEMETRY)
+	nfc_cn_init(nfc_dev);
+#endif
 
 	return 0;
 }
@@ -803,10 +949,14 @@ int nfcc_hw_check(struct nfc_dev *nfc_dev)
 		nfc_dev->nfc_enable_intr(nfc_dev);
 	else {
 		/* making sure that the NFCC starts in a clean state. */
-		gpio_set_ven(nfc_dev, 1);/* HPD : Enable*/
+		// gpio_set_ven(nfc_dev, 1);/* HPD : Enable*/
 		gpio_set_ven(nfc_dev, 0);/* ULPM: Disable */
+		usleep_range(100000, 101000);
 		gpio_set_ven(nfc_dev, 1);/* HPD : Enable*/
 	}
+
+	// Bringup pmuvcc regulators
+	nfc_ldo_config_other_regulators(nfc_dev);
 
 	nci_reset_cmd[0] = 0x20;
 	nci_reset_cmd[1] = 0x00;

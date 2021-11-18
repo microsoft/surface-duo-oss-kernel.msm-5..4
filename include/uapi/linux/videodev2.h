@@ -66,6 +66,14 @@
 #include <linux/v4l2-common.h>
 #include <linux/v4l2-controls.h>
 
+#ifndef _STRUCT_TIMESPEC
+#define _STRUCT_TIMESPEC
+struct timespec {
+	__kernel_time_t	tv_sec;			/* seconds */
+	long		tv_nsec;		/* nanoseconds */
+};
+#endif
+
 /*
  * Common stuff for both V4L1 and V4L2
  * Moved from videodev.h

@@ -87,3 +87,10 @@ config NFC_QTI_I3C
 	  This enables the NFC driver for SNxxx based devices.
 	  This is for I3C connected version. NCI protocol logic
 	  resides in the usermode and it has no other NFC dependencies.
+
+config NFC_SURFACE_I2C_TELEMETRY
+	tristate "Telemetry for QTI NCI based NFC I2C Slave Driver for SNxxx"
+	depends on I2C && NFC_QTI_I2C && CONNECTOR
+	help
+		This instruments the QTI I2C driver to collect data on the types of errors
+		occurring during NCI transactions.
