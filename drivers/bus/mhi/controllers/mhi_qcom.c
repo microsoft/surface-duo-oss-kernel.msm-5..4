@@ -598,7 +598,7 @@ static void mhi_status_cb(struct mhi_controller *mhi_cntrl,
 /* capture host SoC XO time in ticks */
 static u64 mhi_time_get(struct mhi_controller *mhi_cntrl, void *priv)
 {
-	return arch_counter_get_cntvct();
+	return __arch_counter_get_cntvct();
 }
 
 static ssize_t timeout_ms_show(struct device *dev,

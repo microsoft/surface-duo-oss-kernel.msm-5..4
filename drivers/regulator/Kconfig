@@ -29,6 +29,12 @@ config REGULATOR_DEBUG
 	help
 	  Say yes here to enable debugging support.
 
+config REGULATOR_SURFACE_DEBUG
+    bool "Regulator Surface debug support"
+	depends on QGKI
+	help
+	  Say yes to log enabled regulators during suspend.
+
 config REGULATOR_QTI_DEBUG
 	bool "Regulator QTI debug feature support"
 	depends on DEBUG_FS && QGKI

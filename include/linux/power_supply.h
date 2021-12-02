@@ -194,7 +194,19 @@ enum power_supply_type {
 	POWER_SUPPLY_TYPE_USB_HVDCP_3,		/* Efficient High Voltage DCP */
 	POWER_SUPPLY_TYPE_USB_HVDCP_3P5,	/* Efficient High Voltage DCP */
 	POWER_SUPPLY_TYPE_USB_FLOAT,		/* Floating charger */
+#ifdef CONFIG_SURFACE_LIBRARY
+	POWER_SUPPLY_TYPE_MS_BATTERY_PACK,      /* MSCHANGE for Battery Pack */
+#endif
 };
+
+// MSCHANGE for Battery Pack
+#ifndef CONFIG_SURFACE_LIBRARY
+#if IS_ENABLED(CONFIG_SURFACE_LIBRARY)
+#define POWER_SUPPLY_TYPE_MS_BATTERY_PACK (POWER_SUPPLY_TYPE_USB_FLOAT + 1)
+#endif
+#endif
+// MSCHANGE END
+
 
 enum power_supply_usb_type {
 	POWER_SUPPLY_USB_TYPE_UNKNOWN = 0,

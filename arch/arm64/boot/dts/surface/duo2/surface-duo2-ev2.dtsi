@@ -1,0 +1,13 @@
+/*
+ * Copyright (c) 2020 Microsoft Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
+ */
+
+#include "surface-duo2-common.dtsi"
+#include "surface-duo2-haptics-ev2.dtsi"
+#include "surface-duo2-camera-sensor-ev2.dtsi"
+// #include "surface-duo2-audio-ev2.dtsi"
+#include "surface-duo2-display-ev2.dtsi"

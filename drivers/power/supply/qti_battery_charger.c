@@ -21,6 +21,10 @@
 #include <linux/soc/qcom/pmic_glink.h>
 #include <linux/soc/qcom/battery_charger.h>
 #include "qti_typec_class.h"
+#include <linux/soc/surface/surface_utils.h> //MSchange to get manuf mode
+
+#include <soc/qcom/socinfo.h>	//MSCHANGE
+#include <linux/thermal.h>		// MSCHANGE
 
 #define MSG_OWNER_BC			32778
 #define MSG_TYPE_REQ_RESP		1
@@ -43,6 +47,12 @@
 #define BC_WLS_FW_GET_VERSION		0x44
 #define BC_SHUTDOWN_NOTIFY		0x47
 #define BC_GENERIC_NOTIFY		0x80
+//MSCHANGE to add opcodes for the packs
+#define MS_PACK1_GET_REQ		0X81
+#define MS_PACK2_GET_REQ		0X83
+#define MS_GET_REQ			0x85
+#define MS_SET_REQ			0x86
+//MSCHANGE END
 
 /* Generic definitions */
 #define MAX_STR_LEN			128
@@ -58,10 +68,21 @@ enum usb_connector_type {
 	USB_CONNECTOR_TYPE_MICRO_USB,
 };
 
+//MSCHANGE  added ms-pack battery_id identifier
+enum ms_pack{
+	FG_PACK01,
+	FG_PACK02,
+	FG_PACK_MAX,
+};
+
 enum psy_type {
 	PSY_TYPE_BATTERY,
 	PSY_TYPE_USB,
 	PSY_TYPE_WLS,
+	//MSCHANGE to add battery pack type
+	PSY_TYPE_MS_PACK1,
+	PSY_TYPE_MS_PACK2,
+	//MSCHANGE End
 	PSY_TYPE_MAX,
 };
 
@@ -129,11 +150,86 @@ enum wireless_property_id {
 	WLS_PROP_MAX,
 };
 
+
+
 enum {
 	QTI_POWER_SUPPLY_USB_TYPE_HVDCP = 0x80,
 	QTI_POWER_SUPPLY_USB_TYPE_HVDCP_3,
 	QTI_POWER_SUPPLY_USB_TYPE_HVDCP_3P5,
 };
+
+//MSCHANGE to add prop id for the pack
+enum ms_pack_property_id {
+	MS_PACK_CURRENT_NOW,
+	MS_PACK_VOLTAGE_NOW,
+	MS_PACK_REM_CAP,
+	MS_PACK_FCC,
+	MS_PACK_RSOC,
+	MS_PACK_TEMP,
+	MS_PACK_CHARGING_STATUS,
+	MS_PACK_CHARGE_FULL_DESIGN,
+	MS_PACK_PRESENT,
+	MS_PACK_CYCLE_COUNTS,
+	MS_PACK_PROP_MAX,
+};
+
+enum ms_property_id {
+	MS_OS_MODE,
+	MS_MANUF_MODE,
+	MS_FORCED_RSOC,
+	MS_FORCED_TEMP,
+	MS_FORCED_CD,
+	MS_FORCED_BAK_HVTCOUNT,
+	MS_DISABLE_BAK,
+	MS_FORCED_BSC_HVTCOUNT,
+	MS_DISABLE_BSC,
+	MS_BSC_STATUS,
+	MS_INSTANT_CURR,
+	MS_TELEMETRY,
+	MS_REBOOT_NOTIFIER,
+	MS_SYSTEM_FAULT,
+	MS_MANUF_MODE_LTH,
+	MS_MANUF_MODE_UTH,
+	CL_CFG,
+	PMI_IIN_MA,
+	SMB_IIN_MA,
+	SMB_ICHG_MA,
+	MS_DISABLE_DOC,
+	MS_INACTIVE_DOC,
+	MS_PROP_MAX,
+};
+
+typedef enum{
+    MS_NO_FAULT,
+    MS_OVP_FAULT,
+    MS_RSOC_IMBALANCED_FAULT,
+	MS_OT_FAULT,
+}fault_status;
+
+struct ms_propval {
+	int property_id;
+	int battery_id;
+	int intval;
+	const char *strval;
+};
+#define MS_BUF_SIZE 250
+struct ms_charger_req_msg {
+	struct pmic_glink_hdr	hdr;
+	u32			battery_id;
+	u32			property_id;
+	u32			value;
+	u8 			buf[MS_BUF_SIZE];
+};
+
+struct ms_charger_resp_msg {
+	struct pmic_glink_hdr	hdr;
+	u32			property_id;
+	u32			value;
+	u32			ret_code;
+	u8			buf[MS_BUF_SIZE];
+};
+
+//MSCHANGE END
 
 struct battery_charger_set_notify_msg {
 	struct pmic_glink_hdr	hdr;
@@ -257,6 +353,20 @@ struct battery_chg_dev {
 	bool				restrict_chg_en;
 	/* To track the driver initialization status */
 	bool				initialized;
+	//MSChange
+	struct dentry  *ms_pack_debugfs[FG_PACK_MAX];
+	u32     *ms_prop;
+	struct kobject BatteryTelemetryKobjPack1;
+        struct kobject BatteryTelemetryKobjPack2;
+	struct mutex BatteryTelemetryLock;
+	u8      ms_buf[MS_BUF_SIZE];
+	struct notifier_block		ms_reboot_notifier;
+	struct work_struct			ms_notification_work;
+	int		ms_notification;
+	//MSCHANGE END
+	struct thermal_zone_device *tz_pack1_current;
+	struct thermal_zone_device *tz_pack2_current;
+	struct thermal_zone_device *tz_rsoc;
 };
 
 static const int battery_prop_map[BATT_PROP_MAX] = {
@@ -303,6 +413,21 @@ static const int wls_prop_map[WLS_PROP_MAX] = {
 	[WLS_CURR_NOW]		= POWER_SUPPLY_PROP_CURRENT_NOW,
 	[WLS_CURR_MAX]		= POWER_SUPPLY_PROP_CURRENT_MAX,
 };
+
+//MSCHANGE for adding prop id map for battery pack
+static const int ms_pack_prop_map[MS_PACK_PROP_MAX] = {
+	[MS_PACK_CURRENT_NOW]		= POWER_SUPPLY_PROP_CURRENT_NOW,
+	[MS_PACK_VOLTAGE_NOW]		= POWER_SUPPLY_PROP_VOLTAGE_NOW,
+	[MS_PACK_REM_CAP]		= POWER_SUPPLY_PROP_CHARGE_NOW,
+	[MS_PACK_FCC]			= POWER_SUPPLY_PROP_CHARGE_FULL,
+	[MS_PACK_RSOC]			= POWER_SUPPLY_PROP_CAPACITY,
+	[MS_PACK_TEMP]			= POWER_SUPPLY_PROP_TEMP,
+	[MS_PACK_CHARGING_STATUS]	= POWER_SUPPLY_PROP_STATUS,
+	[MS_PACK_CHARGE_FULL_DESIGN]	= POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
+	[MS_PACK_PRESENT]		= POWER_SUPPLY_PROP_PRESENT,
+	[MS_PACK_CYCLE_COUNTS]		= POWER_SUPPLY_PROP_CYCLE_COUNT,
+};
+//MSCHANGE end
 
 static const unsigned int bcdev_usb_extcon_cable[] = {
 	EXTCON_USB,
@@ -435,6 +560,62 @@ static int get_property_id(struct psy_state *pst,
 	return -ENOENT;
 }
 
+//MSCHANGE for get and set prop
+static int get_ms_prop_adsp(void *data , struct ms_propval * msprop){
+	struct ms_charger_req_msg req_msg = { { 0 } };
+	struct battery_chg_dev *bcdev  = data;
+	int rc = 0;
+	req_msg.property_id = msprop->property_id;
+	req_msg.battery_id = msprop->battery_id;
+	req_msg.value = 0;
+	req_msg.hdr.owner = MSG_OWNER_BC;
+	req_msg.hdr.type = MSG_TYPE_REQ_RESP;
+	req_msg.hdr.opcode = MS_GET_REQ;
+
+	pr_debug("get_ms_prop_id : %d",req_msg.property_id);
+
+	rc = battery_chg_write(bcdev, &req_msg, sizeof(req_msg));
+	if(rc != 0){
+		pr_err("failed to read ms_prop :%d, batt_id : %d",msprop->property_id,msprop->battery_id);
+		return rc;
+	}
+	msprop->intval = bcdev->ms_prop[req_msg.property_id];
+	return rc;
+}
+
+static int set_ms_prop_adsp(void * data , struct ms_propval  msprop, const char *buf){
+	int rc = 0;
+	struct ms_charger_req_msg req_msg = { { 0 } };
+	struct battery_chg_dev *bcdev  = data;
+
+	req_msg.property_id = msprop.property_id;
+	req_msg.battery_id = msprop.battery_id;
+	req_msg.hdr.owner = MSG_OWNER_BC;
+	req_msg.hdr.type = MSG_TYPE_REQ_RESP;
+	req_msg.hdr.opcode = MS_SET_REQ;
+	req_msg.value = msprop.intval;
+
+	if(buf != NULL)
+	{
+		if(req_msg.value > MS_BUF_SIZE)
+		{
+			pr_err("set_ms_prop_adsp : Buffer size greater than max supported");
+			return -1;
+		}
+		memcpy(req_msg.buf, buf, req_msg.value);
+	}
+
+	pr_debug("set_ms_prop_id : %d",req_msg.property_id);
+
+	rc =  battery_chg_write(bcdev, &req_msg, sizeof(req_msg));
+	if (rc != 0)  {
+		pr_err("Failed to set ms_prop : %d batt_id : %d\n", msprop.property_id, msprop.battery_id);
+	}
+	return rc;
+}
+
+//MSCHANGE end
+
 static void battery_chg_notify_enable(struct battery_chg_dev *bcdev)
 {
 	struct battery_charger_set_notify_msg req_msg = { { 0 } };
@@ -539,6 +720,7 @@ static void handle_message(struct battery_chg_dev *bcdev, void *data,
 	struct wireless_fw_push_buf_resp *fw_resp_msg;
 	struct wireless_fw_update_status *fw_update_msg;
 	struct wireless_fw_get_version_resp *fw_ver_msg;
+	struct ms_charger_resp_msg *ms_resp_msg = data;
 	struct psy_state *pst;
 	bool ack_set = false;
 
@@ -581,12 +763,49 @@ static void handle_message(struct battery_chg_dev *bcdev, void *data,
 		}
 
 		break;
+	case MS_PACK1_GET_REQ:
+		pst = &bcdev->psy_list[PSY_TYPE_MS_PACK1];
+		if (validate_message(resp_msg, len) &&
+		    resp_msg->property_id < pst->prop_count) {
+			pst->prop[resp_msg->property_id] = resp_msg->value;
+			ack_set = true;
+		}
+		break;
+	case MS_PACK2_GET_REQ:
+		pst = &bcdev->psy_list[PSY_TYPE_MS_PACK2];
+		if (validate_message(resp_msg, len) &&
+		    resp_msg->property_id < pst->prop_count) {
+			pst->prop[resp_msg->property_id] = resp_msg->value;
+			ack_set = true;
+		}
+		break;
+	case MS_GET_REQ:
+		if ((len == sizeof(*ms_resp_msg)) && (ms_resp_msg->ret_code == 0) &&
+		    ms_resp_msg->property_id < MS_PROP_MAX){
+				if(ms_resp_msg->property_id == MS_TELEMETRY ){
+					if(ms_resp_msg->value > MS_BUF_SIZE){
+						pr_err("Telemetry size is bigger than buffer TelemetrySize:%d BUS_SIZE:%d",ms_resp_msg->value,MS_BUF_SIZE);
+						break;
+					}else{
+						memcpy(bcdev->ms_buf, ms_resp_msg->buf, ms_resp_msg->value);
+					}
+				}
+				bcdev->ms_prop[ms_resp_msg->property_id] = ms_resp_msg->value;
+				ack_set = true;
+			}
+		else{
+			pr_err("ret_code:%d, prop_id:%d, len:%d, sizeof(*ms_resp_msg):%d",ms_resp_msg->ret_code,ms_resp_msg->property_id, len, sizeof(*ms_resp_msg));
+		}
+		break;
+	case MS_SET_REQ:
+		if(ms_resp_msg->ret_code == 0)
+			ack_set= true; //set ack true don't check size
+		break;
 	case BC_BATTERY_STATUS_SET:
 	case BC_USB_STATUS_SET:
 	case BC_WLS_STATUS_SET:
 		if (validate_message(data, len))
 			ack_set = true;
-
 		break;
 	case BC_SET_NOTIFY_REQ:
 		/* Always ACK response for notify request */
@@ -699,6 +918,45 @@ static void battery_chg_update_uusb_type(struct battery_chg_dev *bcdev,
 
 static struct power_supply_desc usb_psy_desc;
 
+//MSCHANGE
+static void handle_fault(struct battery_chg_dev *bcdev, int fault){
+	switch(fault){
+		case MS_OVP_FAULT:
+		pr_err("!!!!!!!!!!!!!...OVP Fault Detected...!!!!!!!!!!!");
+		kernel_restart("oem-fgfault-ovp");
+		break;
+		case MS_RSOC_IMBALANCED_FAULT:
+		pr_err("!!!!!!!!!!!!!...RSOC Imbalance Detected...!!!!!!!!!!!");
+		kernel_restart("oem-rsocimbalance");
+		break;
+		case MS_OT_FAULT:
+		pr_err("!!!!!!!!!!!!!...OT Fault Detected...!!!!!!!!!!!");
+		kernel_restart("oem-fgfault-ot");
+		break;
+		default:
+		pr_err("!!!!!!!!!!!!!...NO FAULT...!!!!!!!!!!!");
+		break;
+	}
+}
+static void battery_chg_ms_notification_work(struct work_struct *work)
+{
+	struct battery_chg_dev *bcdev = container_of(work,
+					struct battery_chg_dev, ms_notification_work);
+
+	struct ms_propval propval = {
+									.property_id = bcdev->ms_notification,
+							};
+	get_ms_prop_adsp(bcdev, &propval);
+
+	switch(bcdev->ms_notification){
+		case MS_SYSTEM_FAULT:
+		   handle_fault(bcdev,propval.intval);
+		break;
+		default:
+		break;
+	}
+}
+//MSCHANGE END
 static void battery_chg_update_usb_type_work(struct work_struct *work)
 {
 	struct battery_chg_dev *bcdev = container_of(work,
@@ -777,6 +1035,12 @@ static void handle_notification(struct battery_chg_dev *bcdev, void *data,
 	case BC_WLS_STATUS_GET:
 		pst = &bcdev->psy_list[PSY_TYPE_WLS];
 		break;
+		//MSCHANGE
+	case MS_SYSTEM_FAULT:
+		bcdev->ms_notification = notify_msg->notification;
+		schedule_work(&bcdev->ms_notification_work);
+		break;
+		//MSCHANGE END
 	default:
 		break;
 	}
@@ -1199,11 +1463,97 @@ static const struct power_supply_desc batt_psy_desc = {
 	.property_is_writeable	= battery_psy_prop_is_writeable,
 };
 
+static int ms_pack_psy_prop_is_writeable(struct power_supply *psy,
+		enum power_supply_property prop)
+{
+	return 0;
+}
+
+static int ms_pack_psy_get_prop(struct power_supply *psy,
+		enum power_supply_property prop,
+		union power_supply_propval *pval,int battery_id)
+{
+	struct battery_chg_dev *bcdev = power_supply_get_drvdata(psy);
+	struct psy_state *pst = &bcdev->psy_list[PSY_TYPE_MS_PACK1+battery_id];
+	int prop_id, rc;
+	struct battery_charger_req_msg req_msg = { { 0 } };
+
+	pval->intval = -ENODATA;
+
+	prop_id = get_property_id(pst, prop);
+	if (prop_id < 0)
+		return prop_id;
+
+	req_msg.battery_id = battery_id;
+	req_msg.value = 0;
+	req_msg.hdr.owner = MSG_OWNER_BC;
+	req_msg.hdr.type = MSG_TYPE_REQ_RESP;
+	req_msg.hdr.opcode = pst->opcode_get;
+	req_msg.property_id = prop_id;
+
+	pr_debug("psy: %s prop_id: %u\n", pst->psy->desc->name,
+		req_msg.property_id);
+
+	rc = battery_chg_write(bcdev, &req_msg, sizeof(req_msg));
+	if (rc < 0)
+		return rc;
+	//pval->intval = pst->prop[prop_id];
+	pval->intval = (int16_t)pst->prop[prop_id];
+	return rc;
+}
+
+static int ms_pack1_psy_get_prop(struct power_supply *psy,
+		enum power_supply_property prop,
+		union power_supply_propval *pval){
+		//call with battery_id 0
+		return ms_pack_psy_get_prop(psy,prop,pval,FG_PACK01);
+}
+
+static enum power_supply_property ms_pack_props[] = {
+	POWER_SUPPLY_PROP_CURRENT_NOW,
+	POWER_SUPPLY_PROP_VOLTAGE_NOW,
+	POWER_SUPPLY_PROP_CHARGE_NOW,
+	POWER_SUPPLY_PROP_CHARGE_FULL,
+	POWER_SUPPLY_PROP_CAPACITY,
+	POWER_SUPPLY_PROP_TEMP,
+	POWER_SUPPLY_PROP_STATUS,
+	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
+	POWER_SUPPLY_PROP_PRESENT,
+	POWER_SUPPLY_PROP_CYCLE_COUNT,
+};
+
+static const struct power_supply_desc ms_pack1_psy_desc = {
+	.name			= "ms_pack1",
+	.type			= POWER_SUPPLY_TYPE_MS_BATTERY_PACK,
+	.properties		= ms_pack_props,
+	.num_properties		= ARRAY_SIZE(ms_pack_props),
+	.get_property		= ms_pack1_psy_get_prop,
+	.set_property		= NULL,
+	.property_is_writeable	= ms_pack_psy_prop_is_writeable,
+};
+
+static int ms_pack2_psy_get_prop(struct power_supply *psy,
+		enum power_supply_property prop,
+		union power_supply_propval *pval){
+		//call with battery_id 1
+		return ms_pack_psy_get_prop(psy,prop,pval,FG_PACK02);
+
+}
+
+static const struct power_supply_desc ms_pack2_psy_desc = {
+	.name			= "ms_pack2",
+	.type			= POWER_SUPPLY_TYPE_MS_BATTERY_PACK,
+	.properties		= ms_pack_props,
+	.num_properties		= ARRAY_SIZE(ms_pack_props),
+	.get_property		= ms_pack2_psy_get_prop,
+	.set_property		= NULL,
+	.property_is_writeable	= ms_pack_psy_prop_is_writeable,
+};
+
 static int battery_chg_init_psy(struct battery_chg_dev *bcdev)
 {
 	struct power_supply_config psy_cfg = {};
 	int rc;
-
 	psy_cfg.drv_data = bcdev;
 	psy_cfg.of_node = bcdev->dev->of_node;
 	bcdev->psy_list[PSY_TYPE_BATTERY].psy =
@@ -1230,12 +1580,26 @@ static int battery_chg_init_psy(struct battery_chg_dev *bcdev)
 		pr_err("Failed to register wireless power supply, rc=%d\n", rc);
 		return rc;
 	}
-
+	//MSChange Start
+	bcdev->psy_list[PSY_TYPE_MS_PACK1].psy = devm_power_supply_register(bcdev->dev, &ms_pack1_psy_desc, &psy_cfg);
+	if (IS_ERR(bcdev->psy_list[PSY_TYPE_MS_PACK1].psy)) {
+		rc = PTR_ERR(bcdev->psy_list[PSY_TYPE_MS_PACK1].psy);
+		pr_err("Failed to register ms-pack1 power supply, rc=%d\n", rc);
+		return rc;
+	}
+	bcdev->psy_list[PSY_TYPE_MS_PACK2].psy = devm_power_supply_register(bcdev->dev, &ms_pack2_psy_desc, &psy_cfg);
+	if (IS_ERR(bcdev->psy_list[PSY_TYPE_MS_PACK2].psy)) {
+		rc = PTR_ERR(bcdev->psy_list[PSY_TYPE_MS_PACK2].psy);
+		pr_err("Failed to register ms-pack2 power supply, rc=%d\n", rc);
+		return rc;
+	}
+	//MSChange End
 	return 0;
 }
 
 static void battery_chg_subsys_up_work(struct work_struct *work)
 {
+	struct ms_propval propval;
 	struct battery_chg_dev *bcdev = container_of(work,
 					struct battery_chg_dev, subsys_up_work);
 	int rc;
@@ -1263,6 +1627,18 @@ static void battery_chg_subsys_up_work(struct work_struct *work)
 		if (rc < 0)
 			pr_err("Failed to set ICL(%u uA), rc=%d\n",
 				bcdev->usb_icl_ua, rc);
+	}
+
+	//MSCHANGE
+	propval.property_id = MS_OS_MODE;
+	propval.intval          = 0;
+	set_ms_prop_adsp(bcdev,propval, NULL); //set os mode in adsp
+
+	if(get_manuf_mode()){
+		pr_err("BATTERY_CHG: device is in manuf mode");
+		propval.property_id = MS_MANUF_MODE;
+		propval.intval          = 1;
+		set_ms_prop_adsp(bcdev,propval, NULL); // set manuf mode in adsp
 	}
 }
 
@@ -1479,6 +1855,7 @@ static ssize_t wireless_fw_force_update_store(struct class *c,
 						battery_class);
 	bool val;
 	int rc;
+
 
 	if (kstrtobool(buf, &val) || !val)
 		return -EINVAL;
@@ -1712,6 +2089,48 @@ static ssize_t moisture_detection_en_show(struct class *c,
 }
 static CLASS_ATTR_RW(moisture_detection_en);
 
+//MSCHANGE for store and show doc
+static ssize_t doc_en_store(struct class *c,
+					struct class_attribute *attr,
+					const char *buf, size_t count)
+{
+	struct battery_chg_dev *bcdev = container_of(c, struct battery_chg_dev,
+						battery_class);
+	int rc;
+	bool val;
+	struct ms_propval propval;
+
+	if (kstrtobool(buf, &val))
+		return -EINVAL;
+
+	propval.property_id = MS_INACTIVE_DOC;
+	propval.intval = val;
+
+	rc = set_ms_prop_adsp(bcdev, propval, NULL);
+	if (rc < 0)
+		return rc;
+
+	return count;
+}
+
+static ssize_t doc_en_show(struct class *c,
+					struct class_attribute *attr, char *buf)
+{
+	struct battery_chg_dev *bcdev = container_of(c, struct battery_chg_dev,
+						battery_class);
+	int rc;
+	struct ms_propval propval = {
+									.property_id = MS_INACTIVE_DOC,
+							};
+	rc = get_ms_prop_adsp(bcdev, &propval);
+	if (rc < 0)
+		return rc;
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", propval.intval);
+}
+static CLASS_ATTR_RW(doc_en);
+//MSCHANGE end
+
 static ssize_t moisture_detection_status_show(struct class *c,
 					struct class_attribute *attr, char *buf)
 {
@@ -1799,9 +2218,461 @@ static struct attribute *battery_class_attrs[] = {
 	&class_attr_restrict_cur.attr,
 	&class_attr_usb_real_type.attr,
 	&class_attr_usb_typec_compliant.attr,
+	//MSCHANGE start
+	&class_attr_doc_en.attr,
+	//MSCHANGE end
 	NULL,
 };
 ATTRIBUTE_GROUPS(battery_class);
+
+
+// MSCHANGE debugfs nodes
+static int force_temperature_read_pack1(void *data , u64 *val){
+	int rc;
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK01,
+									.property_id = MS_FORCED_TEMP,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+	return rc;
+}
+
+static int force_temperature_write_pack1(void *data, u64 val)
+{
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK01,
+									.property_id = MS_FORCED_TEMP,
+									.intval 	 = val,
+							};
+	return set_ms_prop_adsp(data, propval, NULL);
+}
+DEFINE_SIMPLE_ATTRIBUTE(force_temperature_ops_pack1, force_temperature_read_pack1,
+			force_temperature_write_pack1, "%d\n");
+
+static int force_temperature_read_pack2(void *data , u64 *val){
+	int rc;
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK02,
+									.property_id = MS_FORCED_TEMP,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+	return rc;
+}
+
+static int force_temperature_write_pack2(void *data, u64 val)
+{
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK02,
+									.property_id = MS_FORCED_TEMP,
+									.intval 	 = val,
+							};
+	return set_ms_prop_adsp(data, propval, NULL);
+}
+DEFINE_SIMPLE_ATTRIBUTE(force_temperature_ops_pack2, force_temperature_read_pack2,
+			force_temperature_write_pack2, "%d\n");
+
+static int force_cd_read_pack1(void *data , u64 *val){
+	int rc;
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK01,
+									.property_id = MS_FORCED_CD,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+	return rc;
+}
+
+static int force_cd_write_pack1(void *data, u64 val)
+{
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK01,
+									.property_id = MS_FORCED_CD,
+									.intval 	 = val,
+							};
+	return set_ms_prop_adsp(data, propval, NULL);
+}
+DEFINE_SIMPLE_ATTRIBUTE(force_cd_ops_pack1, force_cd_read_pack1,
+			force_cd_write_pack1, "%d\n");
+
+static int force_cd_read_pack2(void *data , u64 *val){
+	int rc;
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK02,
+									.property_id = MS_FORCED_CD,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+	return rc;
+}
+
+static int force_cd_write_pack2(void *data, u64 val)
+{
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK02,
+									.property_id = MS_FORCED_CD,
+									.intval 	 = val,
+							};
+	return set_ms_prop_adsp(data, propval, NULL);
+}
+DEFINE_SIMPLE_ATTRIBUTE(force_cd_ops_pack2, force_cd_read_pack2,
+			force_cd_write_pack2, "%d\n");
+
+static int force_rsoc_read_pack1(void *data , u64 *val){
+	int rc;
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK01,
+									.property_id = MS_FORCED_RSOC,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+	return rc;
+}
+
+static int force_rsoc_write_pack1(void *data, u64 val)
+{
+//	return force_rsoc_write(data, val, FG_PACK01);
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK01,
+									.property_id = MS_FORCED_RSOC,
+									.intval		 = val,
+							};
+	return set_ms_prop_adsp(data, propval, NULL);
+}
+DEFINE_SIMPLE_ATTRIBUTE(force_rsoc_ops_pack1, force_rsoc_read_pack1,
+			force_rsoc_write_pack1, "%d\n");
+
+static int force_rsoc_read_pack2(void *data , u64 *val){
+	int rc;
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK02,
+									.property_id = MS_FORCED_RSOC,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+
+	return rc;
+}
+
+static int force_rsoc_write_pack2(void *data, u64 val)
+{
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK02,
+									.property_id = MS_FORCED_RSOC,
+									.intval 	 = val,
+							};
+	return set_ms_prop_adsp(data, propval, NULL);
+}
+DEFINE_SIMPLE_ATTRIBUTE(force_rsoc_ops_pack2, force_rsoc_read_pack2,
+			force_rsoc_write_pack2, "%d\n");
+
+
+
+static int force_bak_hvtcount_read_pack1(void *data , u64 *val){
+	int rc;
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK01,
+									.property_id = MS_FORCED_BAK_HVTCOUNT,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+	return rc;
+}
+
+static int force_bak_hvtcount_write_pack1(void *data, u64 val)
+{
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK01,
+									.property_id = MS_FORCED_BAK_HVTCOUNT,
+									.intval		 = val,
+							};
+	return set_ms_prop_adsp(data, propval, NULL);
+}
+DEFINE_SIMPLE_ATTRIBUTE(force_bak_hvtcount_ops_pack1, force_bak_hvtcount_read_pack1,
+			force_bak_hvtcount_write_pack1, "%d\n");
+
+static int force_bak_hvtcount_read_pack2(void *data , u64 *val){
+	int rc;
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK02,
+									.property_id = MS_FORCED_BAK_HVTCOUNT,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+	return rc;
+}
+
+static int force_bak_hvtcount_write_pack2(void *data, u64 val)
+{
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK02,
+									.property_id = MS_FORCED_BAK_HVTCOUNT,
+									.intval 	 = val,
+							};
+	return set_ms_prop_adsp(data, propval, NULL);
+}
+DEFINE_SIMPLE_ATTRIBUTE(force_bak_hvtcount_ops_pack2, force_bak_hvtcount_read_pack2,
+			force_bak_hvtcount_write_pack2, "%d\n");
+
+
+
+static int force_disable_bak_read(void *data , u64 *val){
+	int rc;
+	struct ms_propval propval = {
+									.property_id = MS_DISABLE_BAK,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+	return rc;
+}
+
+static int force_disable_bak_write(void *data, u64 val)
+{
+	struct ms_propval propval = {
+									.property_id = MS_DISABLE_BAK,
+									.intval 	 = val,
+							};
+	return set_ms_prop_adsp(data, propval, NULL);
+}
+DEFINE_SIMPLE_ATTRIBUTE(force_disable_bak_ops, force_disable_bak_read,
+			force_disable_bak_write, "%d\n");
+
+
+static int force_bsc_hvtcount_read_pack1(void *data, u64 *val)
+{
+	int rc;
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK01,
+									.property_id = MS_FORCED_BSC_HVTCOUNT,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+	return rc;
+}
+
+static int force_bsc_hvtcount_write_pack1(void *data, u64 val)
+{
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK01,
+									.property_id = MS_FORCED_BSC_HVTCOUNT,
+									.intval		 = val,
+							};
+	return set_ms_prop_adsp(data, propval, NULL);
+}
+DEFINE_SIMPLE_ATTRIBUTE(force_bsc_hvtcount_ops_pack1, force_bsc_hvtcount_read_pack1,
+			force_bsc_hvtcount_write_pack1, "%d\n");
+
+
+static int force_bsc_hvtcount_read_pack2(void *data, u64 *val)
+{
+	int rc;
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK02,
+									.property_id = MS_FORCED_BSC_HVTCOUNT,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+	return rc;
+}
+
+static int force_bsc_hvtcount_write_pack2(void *data, u64 val)
+{
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK02,
+									.property_id = MS_FORCED_BSC_HVTCOUNT,
+									.intval		 = val,
+							};
+	return set_ms_prop_adsp(data, propval, NULL);
+}
+DEFINE_SIMPLE_ATTRIBUTE(force_bsc_hvtcount_ops_pack2, force_bsc_hvtcount_read_pack2,
+			force_bsc_hvtcount_write_pack2, "%d\n");
+
+
+static int force_disable_bsc_read(void *data , u64 *val){
+	int rc;
+	struct ms_propval propval = {
+									.property_id = MS_DISABLE_BSC,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+	return rc;
+}
+
+static int force_disable_bsc_write(void *data, u64 val)
+{
+	struct ms_propval propval = {
+									.property_id = MS_DISABLE_BSC,
+									.intval 	 = val,
+							};
+	return set_ms_prop_adsp(data, propval, NULL);
+}
+DEFINE_SIMPLE_ATTRIBUTE(force_disable_bsc_ops, force_disable_bsc_read,
+			force_disable_bsc_write, "%d\n");
+
+static int force_disable_doc_read(void *data , u64 *val){
+	int rc;
+	struct ms_propval propval = {
+									.property_id = MS_DISABLE_DOC,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+	return rc;
+}
+
+static int force_disable_doc_write(void *data, u64 val)
+{
+	struct ms_propval propval = {
+									.property_id = MS_DISABLE_DOC,
+									.intval 	 = val,
+							};
+	return set_ms_prop_adsp(data, propval, NULL);
+}
+DEFINE_SIMPLE_ATTRIBUTE(force_disable_doc_ops, force_disable_doc_read,
+			force_disable_doc_write, "%d\n");
+
+static int get_pack1_bsc_status(void *data, u64 *val)
+{
+	int rc;
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK01,
+									.property_id = MS_BSC_STATUS,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+	return rc;
+}
+DEFINE_SIMPLE_ATTRIBUTE(bsc_pack1_status_ops, get_pack1_bsc_status, NULL, "%d\n");
+
+static int get_pack2_bsc_status(void *data, u64 *val)
+{
+	int rc;
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK02,
+									.property_id = MS_BSC_STATUS,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+	return rc;
+}
+DEFINE_SIMPLE_ATTRIBUTE(bsc_pack2_status_ops, get_pack2_bsc_status, NULL, "%d\n");
+
+static int get_instant_current_pack1(void *data, u64 *val)
+{
+	int rc;
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK01,
+									.property_id = MS_INSTANT_CURR,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+	return rc;
+}
+DEFINE_SIMPLE_ATTRIBUTE(instant_current_ops_pack1, get_instant_current_pack1, NULL, "%d\n");
+
+static int get_instant_current_pack2(void *data, u64 *val)
+{
+	int rc;
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK02,
+									.property_id = MS_INSTANT_CURR,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+	return rc;
+}
+DEFINE_SIMPLE_ATTRIBUTE(instant_current_ops_pack2, get_instant_current_pack2, NULL, "%d\n");
+
+static int lth_manuf_mode_leveling_rsoc_read(void *data , u64 *val){
+	int rc;
+	struct ms_propval propval = {
+									.property_id = MS_MANUF_MODE_LTH,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+	return rc;
+}
+
+static int lth_manuf_mode_leveling_rsoc_write(void *data, u64 val)
+{
+	struct ms_propval propval = {
+									.property_id = MS_MANUF_MODE_LTH,
+									.intval 	 = val,
+							};
+	return set_ms_prop_adsp(data, propval, NULL);
+}
+DEFINE_SIMPLE_ATTRIBUTE(lth_manuf_mode_leveling_rsoc_ops, lth_manuf_mode_leveling_rsoc_read,
+			lth_manuf_mode_leveling_rsoc_write, "%d\n");
+
+
+static int uth_manuf_mode_leveling_rsoc_read(void *data , u64 *val){
+	int rc;
+	struct ms_propval propval = {
+									.property_id = MS_MANUF_MODE_UTH,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+	return rc;
+}
+
+static int uth_manuf_mode_leveling_rsoc_write(void *data, u64 val)
+{
+	struct ms_propval propval = {
+									.property_id = MS_MANUF_MODE_UTH,
+									.intval 	 = val,
+							};
+	return set_ms_prop_adsp(data, propval, NULL);
+}
+DEFINE_SIMPLE_ATTRIBUTE(uth_manuf_mode_leveling_rsoc_ops, uth_manuf_mode_leveling_rsoc_read,
+			uth_manuf_mode_leveling_rsoc_write, "%d\n");
+
+static int cl_cfg_read(void *data , u64 *val){
+	int rc;
+	struct ms_propval propval = {
+									.property_id = CL_CFG,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+	return rc;
+}
+DEFINE_SIMPLE_ATTRIBUTE(cl_cfg_ops, cl_cfg_read,
+			NULL, "%d\n");
+
+static int pmi_iin_ma_read(void *data , u64 *val){
+	int rc;
+	struct ms_propval propval = {
+									.property_id = PMI_IIN_MA,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+	return rc;
+}
+DEFINE_SIMPLE_ATTRIBUTE(pmi_iin_ma_ops, pmi_iin_ma_read,
+			NULL, "%d\n");
+
+static int smb_iin_ma_read(void *data , u64 *val){
+	int rc;
+	struct ms_propval propval = {
+									.property_id = SMB_IIN_MA,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+	return rc;
+}
+DEFINE_SIMPLE_ATTRIBUTE(smb_iin_ma_ops, smb_iin_ma_read,
+			NULL, "%d\n");
+
+static int smb_ichg_ma_read(void *data , u64 *val){
+	int rc;
+	struct ms_propval propval = {
+									.property_id = SMB_ICHG_MA,
+							};
+	rc = get_ms_prop_adsp(data, &propval);
+	*val = propval.intval;
+	return rc;
+}
+DEFINE_SIMPLE_ATTRIBUTE(smb_ichg_ma_ops, smb_ichg_ma_read,
+			NULL, "%d\n");
 
 #ifdef CONFIG_DEBUG_FS
 static void battery_chg_add_debugfs(struct battery_chg_dev *bcdev)
@@ -1824,6 +2695,79 @@ static void battery_chg_add_debugfs(struct battery_chg_dev *bcdev)
 			rc);
 		goto error;
 	}
+	// MSCHANGE Start : Adding debugfs nodes
+	file = debugfs_create_file("force_disable_bak", 0600, dir, bcdev, &force_disable_bak_ops);
+	if (IS_ERR(file)) {
+		rc = PTR_ERR(file);
+		pr_err("Failed to create force_disable_bak debugfs file, rc=%d\n",
+			rc);
+		goto error;
+	}
+
+	file = debugfs_create_file("force_disable_bsc", 0600, dir, bcdev, &force_disable_bsc_ops);
+	if (IS_ERR(file)) {
+		rc = PTR_ERR(file);
+		pr_err("Failed to create force_disable_bsc debugfs file, rc=%d\n",
+			rc);
+		goto error;
+	}
+
+	file = debugfs_create_file("force_disable_doc", 0600, dir, bcdev, &force_disable_doc_ops);
+	if (IS_ERR(file)) {
+		rc = PTR_ERR(file);
+		pr_err("Failed to create force_disable_doc debugfs file, rc=%d\n",
+			rc);
+		goto error;
+	}
+
+	file = debugfs_create_file("lth_manuf_mode_leveling_rsoc", 0600, dir, bcdev, &lth_manuf_mode_leveling_rsoc_ops);
+	if (IS_ERR(file)) {
+		rc = PTR_ERR(file);
+		pr_err("Failed to create lth_manuf_mode_leveling_rsoc debugfs file, rc=%d\n",
+			rc);
+		goto error;
+	}
+
+	file = debugfs_create_file("uth_manuf_mode_leveling_rsoc", 0600, dir, bcdev, &uth_manuf_mode_leveling_rsoc_ops);
+	if (IS_ERR(file)) {
+		rc = PTR_ERR(file);
+		pr_err("Failed to create uth_manuf_mode_leveling_rsoc debugfs file, rc=%d\n",
+			rc);
+		goto error;
+	}
+
+	file = debugfs_create_file("cl_cfg", 0600, dir, bcdev, &cl_cfg_ops);
+	if (IS_ERR(file)) {
+		rc = PTR_ERR(file);
+		pr_err("Failed to create cl_cfg debugfs file, rc=%d\n",
+			rc);
+		goto error;
+	}
+
+	file = debugfs_create_file("pmi_iin_ma", 0600, dir, bcdev, &pmi_iin_ma_ops);
+	if (IS_ERR(file)) {
+		rc = PTR_ERR(file);
+		pr_err("Failed to create pmi_iin_ma debugfs file, rc=%d\n",
+			rc);
+		goto error;
+	}
+
+	file = debugfs_create_file("smb_iin_ma", 0600, dir, bcdev, &smb_iin_ma_ops);
+	if (IS_ERR(file)) {
+		rc = PTR_ERR(file);
+		pr_err("Failed to create smb_iin_ma debugfs file, rc=%d\n",
+			rc);
+		goto error;
+	}
+
+	file = debugfs_create_file("smb_ichg_ma", 0600, dir, bcdev, &smb_ichg_ma_ops);
+	if (IS_ERR(file)) {
+		rc = PTR_ERR(file);
+		pr_err("Failed to create smb_ichg_ma debugfs file, rc=%d\n",
+			rc);
+		goto error;
+	}
+	// MSCHANGE End
 
 	bcdev->debugfs_dir = dir;
 
@@ -1831,9 +2775,54 @@ static void battery_chg_add_debugfs(struct battery_chg_dev *bcdev)
 error:
 	debugfs_remove_recursive(dir);
 }
+
+//MSCHANGE start
+static void ms_debugfs(struct battery_chg_dev *bcdev)
+{
+	int rc;
+	struct dentry *dir;
+
+	dir = debugfs_create_dir("ms_pack1", NULL);
+	if (IS_ERR(dir)) {
+		rc = PTR_ERR(dir);
+		pr_err("Failed to create ms_pack_1 debugfs directory, rc=%d\n",rc);
+		return;
+	}
+	debugfs_create_file("force_rsoc", 0600, dir, bcdev, &force_rsoc_ops_pack1);
+	debugfs_create_file("force_temperature", 0600, dir, bcdev, &force_temperature_ops_pack1);
+	debugfs_create_file("force_cell_disconnect", 0600, dir, bcdev, &force_cd_ops_pack1);
+	debugfs_create_file("force_bak_hvtcount_pack1", 0600, dir, bcdev, &force_bak_hvtcount_ops_pack1);
+	debugfs_create_file("force_bsc_hvtcount_pack1", 0600, dir, bcdev, &force_bsc_hvtcount_ops_pack1);
+	debugfs_create_file("bsc_status", 0400, dir, bcdev, &bsc_pack1_status_ops);
+	debugfs_create_file("instant_current", 0400, dir, bcdev, &instant_current_ops_pack1);
+
+	bcdev->ms_pack_debugfs[FG_PACK01] = dir;
+
+	dir = debugfs_create_dir("ms_pack2", NULL);
+	if (IS_ERR(dir)) {
+		rc = PTR_ERR(dir);
+		pr_err("Failed to create ms_pack_2 debugfs directory, rc=%d\n",rc);
+		return;
+	}
+	debugfs_create_file("force_rsoc", 0600, dir, bcdev, &force_rsoc_ops_pack2);
+	debugfs_create_file("force_temperature", 0600, dir, bcdev, &force_temperature_ops_pack2);
+	debugfs_create_file("force_cell_disconnect", 0600, dir, bcdev, &force_cd_ops_pack2);
+	debugfs_create_file("force_bak_hvtcount_pack2", 0600, dir, bcdev, &force_bak_hvtcount_ops_pack2);
+	debugfs_create_file("force_bsc_hvtcount_pack2", 0600, dir, bcdev, &force_bsc_hvtcount_ops_pack2);
+	debugfs_create_file("bsc_status", 0400, dir, bcdev, &bsc_pack2_status_ops);
+	debugfs_create_file("instant_current", 0400, dir, bcdev, &instant_current_ops_pack2);
+
+	bcdev->ms_pack_debugfs[FG_PACK02] = dir;
+
+	return;
+}
+//MSCHANGE end
+
 #else
 static void battery_chg_add_debugfs(struct battery_chg_dev *bcdev) { }
+static void ms_debugfs(struct battery_chg_dev *bcdev) { }
 #endif
+
 
 static int battery_chg_parse_dt(struct battery_chg_dev *bcdev)
 {
@@ -1901,7 +2890,18 @@ static int battery_chg_parse_dt(struct battery_chg_dev *bcdev)
 
 	return 0;
 }
-
+//MSCHANGE
+static int ms_reboot_callback(struct notifier_block *nb, unsigned long code,
+		void *unused)
+{
+	struct battery_chg_dev *bcdev = container_of(nb, struct battery_chg_dev,
+						     ms_reboot_notifier);
+	struct ms_propval propval = {
+									.property_id = MS_REBOOT_NOTIFIER,
+							};
+	return set_ms_prop_adsp(bcdev, propval, NULL);
+}
+//MSCHANGE END
 static int battery_chg_ship_mode(struct notifier_block *nb, unsigned long code,
 		void *unused)
 {
@@ -1977,12 +2977,317 @@ static int register_extcon_conn_type(struct battery_chg_dev *bcdev)
 	return rc;
 }
 
+// MSCHANGE Start
+static int get_pack1_current(void *data, int *curr)
+{
+	struct battery_chg_dev *bcdev = data;
+	union power_supply_propval val;
+	int rc = ms_pack1_psy_get_prop(bcdev->psy_list[PSY_TYPE_MS_PACK1].psy, POWER_SUPPLY_PROP_CURRENT_NOW, &val);
+	if (rc < 0)
+	{
+		pr_err("Error in getting pack1 current, rc = %d\n", rc);
+		return rc;
+	}
+	*curr = val.intval;
+	return rc;
+}
+
+static const struct thermal_zone_of_device_ops thermal_ops_pack1 = {
+	.get_temp = get_pack1_current,
+};
+
+static int get_pack2_current(void *data, int *curr)
+{
+	struct battery_chg_dev *bcdev = data;
+	union power_supply_propval val;
+	int rc = ms_pack2_psy_get_prop(bcdev->psy_list[PSY_TYPE_MS_PACK2].psy, POWER_SUPPLY_PROP_CURRENT_NOW, &val);
+	if (rc < 0)
+	{
+		pr_err("Error in getting pack2 current, rc = %d\n", rc);
+		return rc;
+	}
+	*curr = val.intval;
+	return rc;
+}
+
+static const struct thermal_zone_of_device_ops thermal_ops_pack2 = {
+	.get_temp = get_pack2_current,
+};
+
+static int get_rsoc(void *data, int *curr)
+{
+	struct battery_chg_dev *bcdev = data;
+	union power_supply_propval val;
+	int rc = battery_psy_get_prop(bcdev->psy_list[PSY_TYPE_BATTERY].psy, POWER_SUPPLY_PROP_CAPACITY, &val);
+	if (rc < 0)
+	{
+		pr_err("Error in getting rsoc, rc = %d\n", rc);
+		return rc;
+	}
+	*curr = val.intval;
+	return rc;
+}
+
+static const struct thermal_zone_of_device_ops thermal_ops_rsoc = {
+	.get_temp = get_rsoc,
+};
+
+static int register_thermal_zones(struct battery_chg_dev* bcdev)
+{
+	int rc = 0;
+
+/*
+	bcdev->tz_pack1_current = devm_thermal_zone_of_sensor_register(bcdev->dev, 0, bcdev, &thermal_ops_pack1);
+	if (IS_ERR(bcdev->tz_pack1_current))
+	{
+		rc = PTR_ERR(bcdev->tz_pack1_current);
+		pr_err("Error in registering pack1 as sensor for a DT thermal zone, rc = %d\n", rc);
+		return rc;
+	}
+
+	bcdev->tz_pack2_current = devm_thermal_zone_of_sensor_register(bcdev->dev, 1, bcdev, &thermal_ops_pack2);
+	if (IS_ERR(bcdev->tz_pack2_current))
+	{
+		rc = PTR_ERR(bcdev->tz_pack2_current);
+		pr_err("Error in registering pack2 as sensor for a DT thermal zone, rc = %d\n", rc);
+		return rc;
+	}
+*/
+
+	bcdev->tz_rsoc = devm_thermal_zone_of_sensor_register(bcdev->dev, 2, bcdev, &thermal_ops_rsoc);
+	if (IS_ERR(bcdev->tz_rsoc))
+	{
+		rc = PTR_ERR(bcdev->tz_rsoc);
+		pr_err("Error in registering rsoc as sensor for a DT thermal zone, rc = %d\n", rc);
+		return rc;
+	}
+
+	return rc;
+}
+
+static ssize_t ms_pack_1_payload_read(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	int rc;
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK01,
+									.property_id = MS_TELEMETRY,
+							};
+	struct battery_chg_dev *bcdev = container_of(kobj, struct battery_chg_dev,
+						     BatteryTelemetryKobjPack1);
+	mutex_lock(&bcdev->BatteryTelemetryLock);
+	rc = get_ms_prop_adsp(bcdev, &propval);
+	if(rc)
+	{
+		pr_err("pack1 payload read failed rc :%d",rc);
+		mutex_unlock(&bcdev->BatteryTelemetryLock);
+		return -EFAULT;
+	}
+	memcpy(buf,&bcdev->ms_buf,propval.intval);
+	mutex_unlock(&bcdev->BatteryTelemetryLock);
+	return propval.intval;
+}
+
+static ssize_t ms_pack1_payload_write(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t n)
+{
+	int rc;
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK01,
+									.property_id = MS_TELEMETRY,
+									.intval = n,
+							};
+	struct battery_chg_dev *bcdev = container_of(kobj, struct battery_chg_dev,
+						     BatteryTelemetryKobjPack1);
+	mutex_lock(&bcdev->BatteryTelemetryLock);
+	rc = set_ms_prop_adsp(bcdev, propval, buf);
+	if(rc)
+	{
+		pr_err("pack1 payload write failed rc :%d",rc);
+		mutex_unlock(&bcdev->BatteryTelemetryLock);
+		return -1;
+	}
+	mutex_unlock(&bcdev->BatteryTelemetryLock);
+	return n;
+}
+
+static ssize_t ms_pack_2_payload_read(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	int rc;
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK02,
+									.property_id = MS_TELEMETRY,
+							};
+	struct battery_chg_dev *bcdev = container_of(kobj, struct battery_chg_dev,
+						     BatteryTelemetryKobjPack2);
+	mutex_lock(&bcdev->BatteryTelemetryLock);
+	rc = get_ms_prop_adsp(bcdev, &propval);
+	if(rc)
+	{
+		pr_err("pack2 payload read failed rc :%d",rc);
+		mutex_unlock(&bcdev->BatteryTelemetryLock);
+		return -EFAULT;
+	}
+	memcpy(buf,&bcdev->ms_buf,propval.intval);
+	mutex_unlock(&bcdev->BatteryTelemetryLock);
+	return propval.intval;
+}
+
+static ssize_t ms_pack2_payload_write(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t n)
+{
+	int rc;
+	struct ms_propval propval = {
+									.battery_id  = FG_PACK02,
+									.property_id = MS_TELEMETRY,
+									.intval = n,
+							};
+	struct battery_chg_dev *bcdev = container_of(kobj, struct battery_chg_dev,
+						     BatteryTelemetryKobjPack2);
+	mutex_lock(&bcdev->BatteryTelemetryLock);
+	rc = set_ms_prop_adsp(bcdev, propval, buf);
+	if(rc)
+	{
+		pr_err("pack2 payload write failed rc :%d",rc);
+		mutex_unlock(&bcdev->BatteryTelemetryLock);
+		return -1;
+	}
+	mutex_unlock(&bcdev->BatteryTelemetryLock);
+	return n;
+}
+
+static struct kobj_attribute ms_pack_1_payload_attribute =
+	__ATTR(payload, 0664, ms_pack_1_payload_read, ms_pack1_payload_write);
+
+static struct kobj_attribute ms_pack_2_payload_attribute =
+	__ATTR(payload, 0664, ms_pack_2_payload_read, ms_pack2_payload_write);
+
+static struct attribute *attrs_pack_1[] = {
+    &ms_pack_1_payload_attribute.attr,
+    NULL,	/* need to NULL terminate the list of attributes */
+};
+
+static struct attribute *attrs_pack_2[] = {
+    &ms_pack_2_payload_attribute.attr,
+    NULL,	/* need to NULL terminate the list of attributes */
+};
+
+static struct attribute_group attr_group_pack_1 = {
+	.attrs = attrs_pack_1,
+};
+
+static struct attribute_group attr_group_pack_2 = {
+	.attrs = attrs_pack_2,
+};
+
+static ssize_t telem_sysfs_show(struct kobject *kobj, struct attribute *attr,
+			     char *buf)
+{
+	struct kobj_attribute *kattr;
+	ssize_t ret = -EIO;
+
+	kattr = container_of(attr, struct kobj_attribute, attr);
+	if (kattr->show)
+		ret = kattr->show(kobj, kattr, buf);
+	return ret;
+}
+
+static ssize_t telem_sysfs_store(struct kobject *kobj, struct attribute *attr, const char* buf, size_t n)
+{
+	struct kobj_attribute *kattr;
+	ssize_t ret = -EIO;
+
+	kattr = container_of(attr, struct kobj_attribute, attr);
+	if(kattr->store)
+		ret = kattr->store(kobj, kattr, buf, n);
+	return ret;
+}
+
+static const struct sysfs_ops telem_sysfs_ops = {
+	.show	= telem_sysfs_show,
+	.store = telem_sysfs_store,
+};
+static struct kobj_type telem_kobj_ktype1 = {
+	.sysfs_ops	= &telem_sysfs_ops,
+};
+
+static struct kobj_type telem_kobj_ktype2 = {
+	.sysfs_ops	= &telem_sysfs_ops,
+};
+
+int ms_telemetry_fs(struct battery_chg_dev *bcdev){
+
+	int rc;
+    struct kobject *BatteryTelemetryKobj = {0};
+
+	mutex_init(&bcdev->BatteryTelemetryLock);
+	rc = telemetry_init();
+	if (rc < 0)
+	{
+	pr_err("BatteryTelemetryInit: failed to create telemetry parent obj");
+	goto Exit;
+	}
+	BatteryTelemetryKobj = kobject_create_and_add("battery", telemetry_kobj);
+    if (!BatteryTelemetryKobj)
+    {
+        pr_err("BatteryTelemetryInit: failed to create battery parent obj");
+        rc = -ENOMEM;
+        kobject_put(BatteryTelemetryKobj); //decrease reference count
+        goto Exit;
+    }
+
+    // Setup sysfs directory for telemetry pack 1
+	 rc = kobject_init_and_add(&bcdev->BatteryTelemetryKobjPack1, &telem_kobj_ktype1, BatteryTelemetryKobj, "1");
+
+    if (rc)
+    {
+        pr_err("BatteryTelemetryInit: failed to create ms_telem_pack_1 parent obj");
+        rc = -ENOMEM;
+        kobject_put(&bcdev->BatteryTelemetryKobjPack1); //decrease reference count
+        goto Exit;
+    }
+
+    // Add 'files' under the sysfs directory for pack 1
+    rc = sysfs_create_group(&bcdev->BatteryTelemetryKobjPack1, &attr_group_pack_1);
+    if (rc)
+    {
+        pr_err("BatteryTelemetryInit: failed to add sysfs group for ms_pack_1");
+        rc = -EINVAL;
+        kobject_del(&bcdev->BatteryTelemetryKobjPack1);
+        goto Exit;
+    }
+
+    // Setup sysfs directory for telemetry for pack 2
+	rc = kobject_init_and_add(&bcdev->BatteryTelemetryKobjPack2, &telem_kobj_ktype2,BatteryTelemetryKobj, "2");
+
+    if (rc)
+    {
+        pr_err("BatteryTelemetryInit: failed to create ms_telem_pack_2 parent obj");
+        rc = -ENOMEM;
+        kobject_put(&bcdev->BatteryTelemetryKobjPack2); //decrease reference count
+        goto Exit;
+    }
+
+    // Add 'files' under the sysfs directory for pack 2
+    rc = sysfs_create_group(&bcdev->BatteryTelemetryKobjPack2, &attr_group_pack_2);
+    if (rc)
+    {
+        pr_err("BatteryTelemetryInit: failed to add sysfs group for ms_telem_pack_2");
+        rc = -EINVAL;
+        kobject_del(&bcdev->BatteryTelemetryKobjPack2);
+        goto Exit;
+    }
+Exit:
+    return rc;
+
+}
+
+// MSCHANGE End
+
 static int battery_chg_probe(struct platform_device *pdev)
 {
 	struct battery_chg_dev *bcdev;
 	struct device *dev = &pdev->dev;
 	struct pmic_glink_client_data client_data = { };
 	int rc, i;
+	struct ms_propval propval;
 
 	bcdev = devm_kzalloc(&pdev->dev, sizeof(*bcdev), GFP_KERNEL);
 	if (!bcdev)
@@ -2000,6 +3305,19 @@ static int battery_chg_probe(struct platform_device *pdev)
 	bcdev->psy_list[PSY_TYPE_WLS].prop_count = WLS_PROP_MAX;
 	bcdev->psy_list[PSY_TYPE_WLS].opcode_get = BC_WLS_STATUS_GET;
 	bcdev->psy_list[PSY_TYPE_WLS].opcode_set = BC_WLS_STATUS_SET;
+	//MSCHANGE start for battery pack glink
+	bcdev->psy_list[PSY_TYPE_MS_PACK1].map = ms_pack_prop_map;
+	bcdev->psy_list[PSY_TYPE_MS_PACK1].prop_count = MS_PACK_PROP_MAX;
+	bcdev->psy_list[PSY_TYPE_MS_PACK1].opcode_get = MS_PACK1_GET_REQ;
+
+	bcdev->psy_list[PSY_TYPE_MS_PACK2].map = ms_pack_prop_map;
+	bcdev->psy_list[PSY_TYPE_MS_PACK2].prop_count = MS_PACK_PROP_MAX;
+	bcdev->psy_list[PSY_TYPE_MS_PACK2].opcode_get = MS_PACK2_GET_REQ;
+	bcdev->ms_prop = devm_kcalloc(&pdev->dev, MS_PROP_MAX,
+						sizeof(u32), GFP_KERNEL);   //allocating memoery to receive data from adsp for ms prop
+		if (!bcdev->ms_prop)
+			return -ENOMEM;
+	//MSCHANGE end
 
 	for (i = 0; i < PSY_TYPE_MAX; i++) {
 		bcdev->psy_list[i].prop =
@@ -2020,6 +3338,8 @@ static int battery_chg_probe(struct platform_device *pdev)
 	init_completion(&bcdev->fw_update_ack);
 	INIT_WORK(&bcdev->subsys_up_work, battery_chg_subsys_up_work);
 	INIT_WORK(&bcdev->usb_type_work, battery_chg_update_usb_type_work);
+	INIT_WORK(&bcdev->ms_notification_work, battery_chg_ms_notification_work); //MSCHANGE
+
 	atomic_set(&bcdev->state, PMIC_GLINK_STATE_UP);
 	bcdev->dev = dev;
 
@@ -2042,7 +3362,11 @@ static int battery_chg_probe(struct platform_device *pdev)
 	bcdev->reboot_notifier.notifier_call = battery_chg_ship_mode;
 	bcdev->reboot_notifier.priority = 255;
 	register_reboot_notifier(&bcdev->reboot_notifier);
-
+	//MSCHANGE
+	bcdev->ms_reboot_notifier.notifier_call = ms_reboot_callback;
+	bcdev->ms_reboot_notifier.priority = 255;
+	register_reboot_notifier(&bcdev->ms_reboot_notifier);
+	//MSCHANGE END
 	rc = battery_chg_parse_dt(bcdev);
 	if (rc < 0) {
 		dev_err(dev, "Failed to parse dt rc=%d\n", rc);
@@ -2064,7 +3388,9 @@ static int battery_chg_probe(struct platform_device *pdev)
 		goto error;
 	}
 
+	register_thermal_zones(bcdev);		// MSCHANGE
 	battery_chg_add_debugfs(bcdev);
+	ms_debugfs(bcdev);
 	battery_chg_notify_enable(bcdev);
 	device_init_wakeup(bcdev->dev, true);
 	rc = register_extcon_conn_type(bcdev);
@@ -2082,12 +3408,27 @@ static int battery_chg_probe(struct platform_device *pdev)
 
 	schedule_work(&bcdev->usb_type_work);
 
+	//MSCHANGE
+	propval.property_id = MS_OS_MODE;
+	propval.intval          = 0;
+	set_ms_prop_adsp(bcdev,propval, NULL); //set os mode in adsp
+
+	if (get_manuf_mode()) {
+		pr_err("BATTERY_CHG: device is in manuf mode");
+		propval.property_id = MS_MANUF_MODE;
+		propval.intval          = 1;
+		set_ms_prop_adsp(bcdev,propval, NULL); // set manuf mode in adsp
+	}
+	ms_telemetry_fs(bcdev);
+	//MSCHANGE END
+
 	return 0;
 error:
 	bcdev->initialized = false;
 	complete(&bcdev->ack);
 	pmic_glink_unregister_client(bcdev->client);
 	unregister_reboot_notifier(&bcdev->reboot_notifier);
+	unregister_reboot_notifier(&bcdev->ms_reboot_notifier); //MSCHANGE
 	return rc;
 }
 
@@ -2100,6 +3441,7 @@ static int battery_chg_remove(struct platform_device *pdev)
 	debugfs_remove_recursive(bcdev->debugfs_dir);
 	class_unregister(&bcdev->battery_class);
 	unregister_reboot_notifier(&bcdev->reboot_notifier);
+	mutex_destroy(&bcdev->BatteryTelemetryLock);
 	qti_typec_class_deinit(bcdev->typec_class);
 	rc = pmic_glink_unregister_client(bcdev->client);
 	if (rc < 0) {
