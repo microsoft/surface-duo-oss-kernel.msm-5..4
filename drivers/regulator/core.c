@@ -6080,7 +6080,7 @@ static int regulator_summary_show(struct seq_file *s, void *data)
 DEFINE_SHOW_ATTRIBUTE(regulator_summary);
 #endif /* CONFIG_DEBUG_FS */
 
-#ifdef CONFIG_REGULATOR_QTI_DEBUG
+#if defined(CONFIG_REGULATOR_QTI_DEBUG) || defined(CONFIG_REGULATOR_SURFACE_DEBUG)
 static int _regulator_debug_print_enabled(struct device *dev, void *data)
 {
 	struct regulator_dev *rdev = dev_to_rdev(dev);
@@ -6138,15 +6138,18 @@ static int _regulator_debug_print_enabled(struct device *dev, void *data)
  */
 void regulator_debug_print_enabled(void)
 {
+	//MSCHANGE to always print regulators enabled during suspend.
+	/*
 	if (likely(!debug_suspend))
 		return;
+	*/
 
 	pr_info("Enabled regulators:\n");
 	class_for_each_device(&regulator_class, NULL, NULL,
 			     _regulator_debug_print_enabled);
 }
 EXPORT_SYMBOL(regulator_debug_print_enabled);
-#endif /* CONFIG_REGULATOR_QTI_DEBUG */
+#endif /* CONFIG_REGULATOR_QTI_DEBUG  or CONFIG_REGULATOR_SURFACE_DEBUG*/
 
 static int __init regulator_init(void)
 {

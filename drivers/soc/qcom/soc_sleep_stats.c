@@ -15,6 +15,8 @@
 #include <linux/platform_device.h>
 
 #include <clocksource/arm_arch_timer.h>
+#include <linux/suspend.h>
+#define LOG_BUF_SIZE 120 //MSCHANGE
 
 #ifdef CONFIG_ARM
 #ifndef readq_relaxed
@@ -27,6 +29,10 @@
 #endif
 #endif
 
+enum soc_log_instance {      //MSCHANGE
+	Entry,
+	Exit,
+};
 struct stats_config {
 	u32 offset_addr;
 	u32 num_records;
@@ -40,6 +46,7 @@ struct soc_sleep_stats_data {
 	struct kobject *kobj;
 	struct kobj_attribute ka;
 	void __iomem *reg;
+	struct notifier_block pm_notifier; // MSCHANGE
 };
 
 struct entry {
@@ -183,6 +190,69 @@ static const struct of_device_id soc_sleep_stats_table[] = {
 	{ },
 };
 
+//MSCHANGE start
+void log_soc_sleep_stats( struct soc_sleep_stats_data *drv, int isExit)
+{
+	ssize_t index;
+	uint32_t offset;
+	ssize_t shift = 0;
+	char stat_name[5] = {0};
+	struct entry data;
+	struct entry *e = &data;
+	void __iomem *reg = drv->reg;
+	char buf[LOG_BUF_SIZE];
+
+	if(isExit)
+		shift += scnprintf(buf + shift, LOG_BUF_SIZE - shift, "PM: Exit soc: ");
+	else
+		shift += scnprintf(buf + shift, LOG_BUF_SIZE - shift, "PM: Entry soc: ");
+
+	for (index = 0; index < drv->config->num_records; index++) {
+		offset = offsetof(struct entry, stat_type);
+		e->stat_type = le32_to_cpu(readl_relaxed(reg + offset));
+        memcpy(stat_name, &e->stat_type, sizeof(u32));
+
+		offset = offsetof(struct entry, count);
+		e->count = le32_to_cpu(readl_relaxed(reg + offset));
+
+		offset = offsetof(struct entry, accumulated);
+		e->accumulated = le64_to_cpu(readq_relaxed(reg + offset));
+		e->accumulated = get_time_in_sec(e->accumulated);
+
+		reg += sizeof(struct entry);
+
+		if (drv->config->appended_stats_avail)
+			reg += sizeof(struct appended_entry);
+		// log soc sleep stats in format : subsystem( suspend counts, suspend accumulation duration(sec))
+		shift += scnprintf(buf + shift, LOG_BUF_SIZE - shift,
+			 "%s (%u, %llu), ",
+			 stat_name,
+			 e->count,
+			 e->accumulated);
+
+	}
+	pr_info("%s", buf);
+	memset(buf, 0, LOG_BUF_SIZE);
+	return;
+}
+
+
+static int pm_notify(struct notifier_block *nb, unsigned long mode, void *_unused)
+{
+    struct soc_sleep_stats_data *drv = container_of( nb, struct soc_sleep_stats_data , pm_notifier);
+	switch(mode){
+		case PM_SUSPEND_PREPARE:
+			log_soc_sleep_stats(drv, Entry);
+			break;
+		case PM_POST_SUSPEND:
+			log_soc_sleep_stats(drv, Exit);
+			break;
+	}
+	return 0;
+
+}
+//MSCHANGE End
+
 static int soc_sleep_stats_probe(struct platform_device *pdev)
 {
 	struct soc_sleep_stats_data *drv;
@@ -227,6 +297,12 @@ static int soc_sleep_stats_probe(struct platform_device *pdev)
 		pr_err("ioremap failed\n");
 		return -ENOMEM;
 	}
+	// MSCHANGE Start
+	drv->pm_notifier.notifier_call = pm_notify;
+	ret = register_pm_notifier(&drv->pm_notifier);
+	if (ret)
+		pr_err("PM: Cann't register suspend notifier, ret = %d \n",ret);
+	//MSCHANGE End
 
 	platform_set_drvdata(pdev, drv);
 	return 0;
