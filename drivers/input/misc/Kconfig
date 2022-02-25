@@ -914,4 +914,11 @@ config INPUT_STPMIC1_ONKEY
 	  To compile this driver as a module, choose M here: the
 	  module will be called stpmic1_onkey.
 
+config INPUT_TOF8801
+	tristate "TOF8801 LDAF support"
+	default n
+	help
+	  To compile this driver as a module, choose M here: the
+	  module will be called tmf8801.
+
 endif

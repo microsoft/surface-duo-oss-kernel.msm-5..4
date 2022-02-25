@@ -565,7 +565,16 @@ static int msm_restart_probe(struct platform_device *pdev)
 	restart_nb.priority = 200;
 	register_restart_handler(&restart_nb);
 
+	// MSCHANGE START
+	// Setting DLOAD mode to minidump and enabling EMMC_DLOAD.
+	// This will help the device go into minidump mode if there
+	// is a crash between this driver and the init script for changing
+	// the cookie based on build flavour
+	dload_type = SCM_DLOAD_MINIDUMP;
 	set_dload_mode(download_mode);
+	if (dload_type_addr)
+		__raw_writel (EMMC_DLOAD_TYPE, dload_type_addr);
+	// MSCHANGE ENDS
 	if (!download_mode)
 		qcom_scm_disable_sdi();
 

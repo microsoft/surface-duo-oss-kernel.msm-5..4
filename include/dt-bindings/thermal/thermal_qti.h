@@ -72,6 +72,9 @@
 #define QMI_MMW2		58
 #define QMI_MMW3		59
 #define QMI_MMW_IFIC0		60
+#define QMI_SYS_THERM_3		61
+#define QMI_SYS_THERM_4		62
+#define QMI_SYS_THERM_5		63
 
 #define QMI_MODEM_INST_ID	0x0
 #define QMI_ADSP_INST_ID	0x1
