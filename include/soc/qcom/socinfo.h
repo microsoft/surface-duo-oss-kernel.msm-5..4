@@ -12,6 +12,7 @@
 uint32_t socinfo_get_id(void);
 uint32_t socinfo_get_serial_number(void);
 const char *socinfo_get_id_string(void);
+uint32_t socinfo_get_platform_subtype_oem(void);/*MSCHANGE*/
 #else
 static inline uint32_t socinfo_get_id(void)
 {
@@ -27,6 +28,13 @@ static inline const char *socinfo_get_id_string(void)
 {
 	return "N/A";
 }
+
+/*MSCHANGE start*/
+static inline uint32_t socinfo_get_platform_subtype_oem(void)
+{
+	return 0;
+}
+/*MSCHANGE end*/
 #endif /* CONFIG_QCOM_SOCINFO */
 
 #endif /* __SOC_QCOM_SOCINFO_H__ */

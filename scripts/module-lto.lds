@@ -5,6 +5,8 @@
  * Merge the split sections in the final binary.
  */
 SECTIONS {
+	__patchable_function_entries : { *(__patchable_function_entries) }
+
 	/*
 	 * LLVM may emit .eh_frame with CONFIG_CFI_CLANG despite
 	 * -fno-asynchronous-unwind-tables. Discard the section.

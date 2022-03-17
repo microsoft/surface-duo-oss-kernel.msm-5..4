@@ -539,4 +539,8 @@ source "drivers/misc/cxl/Kconfig"
 source "drivers/misc/ocxl/Kconfig"
 source "drivers/misc/cardreader/Kconfig"
 source "drivers/misc/habanalabs/Kconfig"
+source "drivers/misc/fpr_FingerprintCard/Kconfig"
+#MSCHANGE start
+source "drivers/misc/booting_watchdog/Kconfig"
+#MSCHANGE end
 endmenu

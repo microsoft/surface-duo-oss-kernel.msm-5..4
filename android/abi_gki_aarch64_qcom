@@ -2335,6 +2335,7 @@
   spi_register_controller
   __spi_register_driver
   spi_setup
+  spi_async
   spi_sync
   spi_unregister_controller
   __splice_from_pipe

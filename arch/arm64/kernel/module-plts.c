@@ -4,6 +4,7 @@
  */
 
 #include <linux/elf.h>
+#include <linux/ftrace.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/sort.h>
@@ -304,9 +305,16 @@ int module_frob_arch_sections(Elf_Ehdr *ehdr, Elf_Shdr *sechdrs,
 			mod->arch.core.plt_shndx = i;
 		else if (!strcmp(secstrings + sechdrs[i].sh_name, ".init.plt"))
 			mod->arch.init.plt_shndx = i;
+	#ifdef CONFIG_QGKI
 		else if (!strcmp(secstrings + sechdrs[i].sh_name,
 				 ".text.ftrace_trampoline"))
 			tramp = sechdrs + i;
+	#else
+		else if (IS_ENABLED(CONFIG_DYNAMIC_FTRACE) &&
+			 !strcmp(secstrings + sechdrs[i].sh_name,
+				 ".text.ftrace_trampoline"))
+			tramp = sechdrs + i;
+	#endif
 		else if (sechdrs[i].sh_type == SHT_SYMTAB)
 			syms = (Elf64_Sym *)sechdrs[i].sh_addr;
 	}
@@ -369,7 +377,11 @@ int module_frob_arch_sections(Elf_Ehdr *ehdr, Elf_Shdr *sechdrs,
 		tramp->sh_type = SHT_NOBITS;
 		tramp->sh_flags = SHF_EXECINSTR | SHF_ALLOC;
 		tramp->sh_addralign = __alignof__(struct plt_entry);
+	#ifdef CONFIG_QGKI
+		tramp->sh_size = NR_FTRACE_PLTS * sizeof(struct plt_entry);
+	#else
 		tramp->sh_size = sizeof(struct plt_entry);
+	#endif
 	}
 
 	return 0;
