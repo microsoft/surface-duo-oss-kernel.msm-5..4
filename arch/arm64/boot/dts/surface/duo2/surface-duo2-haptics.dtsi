@@ -1,0 +1,60 @@
+/*
+ * Copyright (c) 2020 Microsoft Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
+ */
+
+&pm8350b_haptics {
+	/* LRA has max voltage of 2.000Vrms (5.656Vpp or 2.828Vpk), vmax-mv is defined as Vpk */
+	qcom,vmax-mv = <2828>;
+	/* LRA has a frequency of 190Hz, or a period of 5.263ms */
+	qcom,lra-period-us = <5263>;
+	status = "ok";
+
+	effect_0 {
+		/* CLICK */
+		qcom,effect-id = <0>;
+		qcom,wf-vmax-mv = <2828>;
+		qcom,wf-pattern-period-us = <5263>;
+	};
+
+	effect_1 {
+		/* DOUBLE_CLICK */
+		qcom,effect-id = <1>;
+		qcom,wf-vmax-mv = <2828>;
+		qcom,wf-pattern-period-us = <5263>;
+	};
+
+	effect_2 {
+		/* TICK */
+		/* Update it to rifle gaming effect */
+		qcom,effect-id = <2>;
+		qcom,wf-vmax-mv = <2828>;
+		qcom,wf-pattern-period-us = <5263>;
+	};
+
+	effect_3 {
+		/* THUD */
+		/* Update it to pistol gaming effect */
+		qcom,effect-id = <3>;
+		qcom,wf-vmax-mv = <2828>;
+		qcom,wf-pattern-period-us = <5263>;
+	};
+
+	effect_4 {
+		/* POP */
+		/* Update it to pistol-silenced gaming effect */
+		qcom,effect-id = <4>;
+		qcom,wf-vmax-mv = <2828>;
+		qcom,wf-pattern-period-us = <5263>;
+	};
+
+	effect_5 {
+		/* HEAVY CLICK */
+		qcom,effect-id = <5>;
+		qcom,wf-vmax-mv = <2828>;
+		qcom,wf-pattern-period-us = <5263>;
+	};
+};

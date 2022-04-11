@@ -7,6 +7,7 @@
  *  Copyright (c) 2005 Michael Haboustak <mike-@cinci.rr.com> for Concept2, Inc
  *  Copyright (c) 2006-2007 Jiri Kosina
  *  Copyright (c) 2008 Jiri Slaby
+ *  Copyright (c) 2020 Microsoft Corporation
  */
 
 /*
@@ -16,6 +17,7 @@
 #include <linux/input.h>
 #include <linux/hid.h>
 #include <linux/module.h>
+#include <linux/pm_runtime.h>
 
 #include "hid-ids.h"
 
@@ -27,6 +29,8 @@
 #define MS_DUPLICATE_USAGES	BIT(5)
 #define MS_SURFACE_DIAL		BIT(6)
 #define MS_QUIRK_FF		BIT(7)
+#define MS_RUNTIME_PM		BIT(8)
+#define MS_NOHIDINPUT		BIT(9)
 
 struct ms_data {
 	unsigned long quirks;
@@ -370,6 +374,7 @@ static int ms_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	unsigned long quirks = id->driver_data;
 	struct ms_data *ms;
 	int ret;
+	unsigned int connect_mask;
 
 	ms = devm_kzalloc(&hdev->dev, sizeof(*ms), GFP_KERNEL);
 	if (ms == NULL)
@@ -379,11 +384,27 @@ static int ms_probe(struct hid_device *hdev, const struct hid_device_id *id)
 
 	hid_set_drvdata(hdev, ms);
 
+	connect_mask = HID_CONNECT_DEFAULT | ((quirks & MS_HIDINPUT) ?
+			HID_CONNECT_HIDINPUT_FORCE : 0);
+
 	if (quirks & MS_NOGET)
 		hdev->quirks |= HID_QUIRK_NOGET;
 
 	if (quirks & MS_SURFACE_DIAL)
 		hdev->quirks |= HID_QUIRK_INPUT_PER_APP;
+
+	if (quirks & MS_RUNTIME_PM) {
+		pm_runtime_get_noresume(&hdev->dev);
+		pm_runtime_set_active(&hdev->dev);
+		pm_suspend_ignore_children(&hdev->dev, true);
+		pm_runtime_enable(&hdev->dev);
+		pm_runtime_forbid(&hdev->dev);
+		device_enable_async_suspend(&hdev->dev);
+		pm_runtime_put(&hdev->dev);
+	}
+
+	if (quirks & MS_NOHIDINPUT)
+		connect_mask &= ~HID_CONNECT_HIDINPUT;
 
 	ret = hid_parse(hdev);
 	if (ret) {
@@ -391,8 +412,7 @@ static int ms_probe(struct hid_device *hdev, const struct hid_device_id *id)
 		goto err_free;
 	}
 
-	ret = hid_hw_start(hdev, HID_CONNECT_DEFAULT | ((quirks & MS_HIDINPUT) ?
-				HID_CONNECT_HIDINPUT_FORCE : 0));
+	ret = hid_hw_start(hdev, connect_mask);
 	if (ret) {
 		hid_err(hdev, "hw start failed\n");
 		goto err_free;
@@ -409,9 +429,36 @@ err_free:
 
 static void ms_remove(struct hid_device *hdev)
 {
+	struct ms_data *ms = hid_get_drvdata(hdev);
+	unsigned long quirks = ms->quirks;
+	if (quirks & MS_RUNTIME_PM) {
+		pm_runtime_disable(&hdev->dev);
+		pm_suspend_ignore_children(&hdev->dev, false);
+		pm_runtime_set_suspended(&hdev->dev);
+	}
 	hid_hw_stop(hdev);
 	ms_remove_ff(hdev);
 }
+
+static int ms_runtime_suspend(struct device *dev)
+{
+	struct hid_device *hdev =
+		dev ? container_of(dev, struct hid_device, dev) : NULL;
+	hid_hw_power(hdev, PM_HINT_NORMAL);
+	return 0;
+}
+
+static int ms_runtime_resume(struct device *dev)
+{
+	struct hid_device *hdev =
+		dev ? container_of(dev, struct hid_device, dev) : NULL;
+	hid_hw_power(hdev, PM_HINT_NORMAL);
+	return 0;
+}
+
+static const struct dev_pm_ops ms_pm = {
+	SET_RUNTIME_PM_OPS(ms_runtime_suspend, ms_runtime_resume, NULL)
+};
 
 static const struct hid_device_id ms_devices[] = {
 	{ HID_USB_DEVICE(USB_VENDOR_ID_MICROSOFT, USB_DEVICE_ID_SIDEWINDER_GV),
@@ -451,6 +498,8 @@ static const struct hid_device_id ms_devices[] = {
 		.driver_data = MS_SURFACE_DIAL },
 	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_MICROSOFT, USB_DEVICE_ID_MS_XBOX_ONE_S_CONTROLLER),
 		.driver_data = MS_QUIRK_FF },
+	{ HID_SPI_DEVICE(USB_VENDOR_ID_MICROSOFT, SPI_DEVICE_ID_MS_SURFACE_D6),
+		.driver_data = MS_RUNTIME_PM | MS_NOHIDINPUT },
 	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_MICROSOFT, USB_DEVICE_ID_8BITDO_SN30_PRO_PLUS),
 		.driver_data = MS_QUIRK_FF },
 	{ }

@@ -1926,7 +1926,13 @@ int hidinput_connect(struct hid_device *hid, unsigned int force)
 		}
 	}
 
-	hidinput_change_resolution_multipliers(hid);
+	// MSFT_START
+	/* High resolution multiplier scrolling is sending a raw request
+	   for feature requests to surface slim pen2 as a result 5s delay
+	   for each request.Using quirks flag to avoid for our pen.*/
+	if (!(hid->quirks & HID_QUIRK_NO_HIGH_RESOLUTION))
+		hidinput_change_resolution_multipliers(hid);
+	// MSFT_END
 
 	list_for_each_entry_safe(hidinput, next, &hid->inputs, list) {
 		if (drv->input_configured &&

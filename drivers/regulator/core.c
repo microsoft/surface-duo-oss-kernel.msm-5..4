@@ -6080,7 +6080,7 @@ static int regulator_summary_show(struct seq_file *s, void *data)
 DEFINE_SHOW_ATTRIBUTE(regulator_summary);
 #endif /* CONFIG_DEBUG_FS */
 
-#ifdef CONFIG_REGULATOR_QTI_DEBUG
+#if defined(CONFIG_REGULATOR_QTI_DEBUG) || defined(CONFIG_REGULATOR_SURFACE_DEBUG)
 static int _regulator_debug_print_enabled(struct device *dev, void *data)
 {
 	struct regulator_dev *rdev = dev_to_rdev(dev);
@@ -6098,33 +6098,39 @@ static int _regulator_debug_print_enabled(struct device *dev, void *data)
 		mode = rdev->desc->ops->get_mode(rdev);
 
 	if (uV != -EPERM && mode != -EPERM)
-		pr_info("%s[%u] %d uV, mode=%d\n",
+		pr_info("## %s[%u] %d uV, mode=%d\n",
 			rdev_get_name(rdev), rdev->use_count, uV, mode);
 	else if (uV != -EPERM)
-		pr_info("%s[%u] %d uV\n",
+		pr_info("## %s[%u] %d uV\n",
 			rdev_get_name(rdev), rdev->use_count, uV);
 	else if (mode != -EPERM)
-		pr_info("%s[%u], mode=%d\n",
+		pr_info("## %s[%u], mode=%d\n",
 			rdev_get_name(rdev), rdev->use_count, mode);
 	else
-		pr_info("%s[%u]\n", rdev_get_name(rdev), rdev->use_count);
+		pr_info("## %s[%u]\n", rdev_get_name(rdev), rdev->use_count);
 
 	/* Print a header if there are consumers. */
+	//MSCHANGE removing header print for every rdev. We will print header only once in function "regulator_debug_print_enabled()".
+	/*
 	if (rdev->open_count)
-		pr_info("  %-32s EN    Min_uV   Max_uV  load_uA\n",
+		pr_info("##  %-32s EN    Min_uV   Max_uV  load_uA\n",
 			"Device-Supply");
-
+	*/
 	list_for_each_entry(reg, &rdev->consumer_list, list) {
-		if (reg->supply_name)
-			supply_name = reg->supply_name;
-		else
-			supply_name = "(null)-(null)";
-
-		pr_info("  %-32s %d   %8d %8d %8d\n", supply_name,
-			reg->enable_count,
-			reg->voltage[PM_SUSPEND_ON].min_uV,
-			reg->voltage[PM_SUSPEND_ON].max_uV,
-			reg->uA_load);
+		if (reg->enable_count) // MSCHANGE to print only enabled regulator consumer.
+		{
+			if (reg->supply_name)
+				supply_name = reg->supply_name;
+			else
+				supply_name = "(null)-(null)";
+			
+			pr_info("##  %-32s %d   %8d %8d %8d\n", supply_name,
+				reg->enable_count,
+				reg->voltage[PM_SUSPEND_ON].min_uV,
+				reg->voltage[PM_SUSPEND_ON].max_uV,
+				reg->uA_load);
+			*(int *)data += 1; // MSCHANGE to increment total Enabled Regulator count by one.
+		}
 	}
 
 	return 0;
@@ -6138,15 +6144,22 @@ static int _regulator_debug_print_enabled(struct device *dev, void *data)
  */
 void regulator_debug_print_enabled(void)
 {
+	int enabled_reg_count = 0;  // MSCHANGE
+	//MSCHANGE to always print regulators enabled during suspend.
+	/*
 	if (likely(!debug_suspend))
 		return;
+	*/
 
 	pr_info("Enabled regulators:\n");
-	class_for_each_device(&regulator_class, NULL, NULL,
+	pr_info("##  %-32s EN    Min_uV   Max_uV  load_uA\n",
+			"Device-Supply"); // MSCHANGE to print header.
+	class_for_each_device(&regulator_class, NULL, &enabled_reg_count,
 			     _regulator_debug_print_enabled);
+	pr_info("Total enabled regulators count: %d", enabled_reg_count); // MSCHANGE to log Enabled Regulators count.
 }
 EXPORT_SYMBOL(regulator_debug_print_enabled);
-#endif /* CONFIG_REGULATOR_QTI_DEBUG */
+#endif /* CONFIG_REGULATOR_QTI_DEBUG  or CONFIG_REGULATOR_SURFACE_DEBUG*/
 
 static int __init regulator_init(void)
 {
