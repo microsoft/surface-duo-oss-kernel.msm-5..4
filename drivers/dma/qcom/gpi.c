@@ -558,6 +558,7 @@ struct gpii_chan {
 
 struct gpii {
 	u32 gpii_id;
+	u32 type;
 	struct gpii_chan gpii_chan[MAX_CHANNELS_PER_GPII];
 	struct gpi_dev *gpi_dev;
 	enum EV_PRIORITY ev_priority;
@@ -613,6 +614,7 @@ const u32 GPII_CHAN_DIR[MAX_CHANNELS_PER_GPII] = {
 
 struct dentry *pdentry;
 static irqreturn_t gpi_handle_irq(int irq, void *data);
+static irqreturn_t gpi_handle_threaded_irq(int irq, void *data);
 static void gpi_ring_recycle_ev_element(struct gpi_ring *ring);
 static int gpi_ring_add_element(struct gpi_ring *ring, void **wp);
 static void gpi_process_events(struct gpii *gpii);
@@ -1044,9 +1046,10 @@ static int gpi_config_interrupts(struct gpii *gpii,
 		  (mask) ? 'T' : 'F');
 
 	if (!gpii->configured_irq) {
-		ret = devm_request_irq(gpii->gpi_dev->dev, gpii->irq,
-				       gpi_handle_irq, IRQF_TRIGGER_HIGH,
-				       gpii->label, gpii);
+		ret = devm_request_threaded_irq(gpii->gpi_dev->dev, gpii->irq,
+				gpi_handle_irq, gpi_handle_threaded_irq,
+				IRQF_TRIGGER_HIGH | IRQF_ONESHOT,
+				gpii->label, gpii);
 		if (ret < 0) {
 			GPII_CRITIC(gpii, GPI_DBG_COMMON,
 				    "error request irq:%d ret:%d\n",
@@ -1350,13 +1353,9 @@ static irqreturn_t gpi_handle_irq(int irq, void *data)
 {
 	struct gpii *gpii = data;
 	u32 type;
-	unsigned long flags;
 	u32 offset;
-	u32 gpii_id = gpii->gpii_id;
 
 	GPII_VERB(gpii, GPI_DBG_COMMON, "enter\n");
-
-	read_lock_irqsave(&gpii->pm_lock, flags);
 
 	/*
 	 * States are out of sync to receive interrupt
@@ -1372,78 +1371,94 @@ static irqreturn_t gpi_handle_irq(int irq, void *data)
 	offset = GPI_GPII_n_CNTXT_TYPE_IRQ_OFFS(gpii->gpii_id);
 	type = gpi_read_reg(gpii, gpii->regs + offset);
 
-	do {
-		GPII_VERB(gpii, GPI_DBG_COMMON, "CNTXT_TYPE_IRQ:0x%08x\n",
-			  type);
-		/* global gpii error */
-		if (type & GPI_GPII_n_CNTXT_TYPE_IRQ_MSK_GLOB) {
-			GPII_ERR(gpii, GPI_DBG_COMMON,
-				 "processing global error irq\n");
-			gpi_process_glob_err_irq(gpii);
-			type &= ~(GPI_GPII_n_CNTXT_TYPE_IRQ_MSK_GLOB);
-		}
+	GPII_VERB(gpii, GPI_DBG_COMMON, "CNTXT_TYPE_IRQ:0x%08x\n",
+			type);
 
-		/* transfer complete interrupt */
-		if (type & GPI_GPII_n_CNTXT_TYPE_IRQ_MSK_IEOB) {
-			GPII_VERB(gpii, GPI_DBG_COMMON,
-				  "process IEOB interrupts\n");
-			gpi_process_ieob(gpii);
-			type &= ~GPI_GPII_n_CNTXT_TYPE_IRQ_MSK_IEOB;
-		}
-
-		/* event control irq */
-		if (type & GPI_GPII_n_CNTXT_TYPE_IRQ_MSK_EV_CTRL) {
-			u32 ev_state;
-			u32 ev_ch_irq;
-
-			GPII_INFO(gpii, GPI_DBG_COMMON,
-				  "processing EV CTRL interrupt\n");
-			offset = GPI_GPII_n_CNTXT_SRC_EV_CH_IRQ_OFFS(gpii_id);
-			ev_ch_irq = gpi_read_reg(gpii, gpii->regs + offset);
-
-			offset = GPI_GPII_n_CNTXT_SRC_EV_CH_IRQ_CLR_OFFS
-				(gpii_id);
-			gpi_write_reg(gpii, gpii->regs + offset, ev_ch_irq);
-			ev_state = gpi_read_reg(gpii, gpii->ev_cntxt_base_reg +
-						CNTXT_0_CONFIG);
-			ev_state &= GPI_GPII_n_EV_CH_k_CNTXT_0_CHSTATE_BMSK;
-			ev_state >>= GPI_GPII_n_EV_CH_k_CNTXT_0_CHSTATE_SHFT;
-
-			/*
-			 * CMD EV_CMD_DEALLOC is always successful. However
-			 * cmd does not change hardware status. So overwriting
-			 * software state to default state.
-			 */
-			if (gpii->gpi_cmd == GPI_EV_CMD_DEALLOC)
-				ev_state = DEFAULT_EV_CH_STATE;
-
-			gpii->ev_state = ev_state;
-			GPII_INFO(gpii, GPI_DBG_COMMON,
-				  "setting EV state to %s\n",
-				  TO_GPI_EV_STATE_STR(gpii->ev_state));
-			complete_all(&gpii->cmd_completion);
-			type &= ~(GPI_GPII_n_CNTXT_TYPE_IRQ_MSK_EV_CTRL);
-		}
-
-		/* channel control irq */
-		if (type & GPI_GPII_n_CNTXT_TYPE_IRQ_MSK_CH_CTRL) {
-			GPII_INFO(gpii, GPI_DBG_COMMON,
-				  "process CH CTRL interrupts\n");
-			gpi_process_ch_ctrl_irq(gpii);
-			type &= ~(GPI_GPII_n_CNTXT_TYPE_IRQ_MSK_CH_CTRL);
-		}
-
-		if (type) {
-			GPII_CRITIC(gpii, GPI_DBG_COMMON,
-				 "Unhandled interrupt status:0x%x\n", type);
-			gpi_process_gen_err_irq(gpii);
-			goto exit_irq;
-		}
-		offset = GPI_GPII_n_CNTXT_TYPE_IRQ_OFFS(gpii->gpii_id);
-		type = gpi_read_reg(gpii, gpii->regs + offset);
-	} while (type);
+	if (type) {
+		gpii->type = type;
+		return IRQ_WAKE_THREAD;
+	}
 
 exit_irq:
+	return IRQ_NONE;
+}
+
+static irqreturn_t gpi_handle_threaded_irq(int irq, void *data)
+{
+	struct gpii *gpii = data;
+	u32 type;
+	unsigned long flags;
+	u32 offset;
+	u32 gpii_id = gpii->gpii_id;
+
+	GPII_VERB(gpii, GPI_DBG_COMMON, "enter\n");
+
+	read_lock_irqsave(&gpii->pm_lock, flags);
+
+	type = gpii->type;
+
+	GPII_VERB(gpii, GPI_DBG_COMMON, "CNTXT_TYPE_IRQ:0x%08x\n",
+			type);
+	/* global gpii error */
+	if (type & GPI_GPII_n_CNTXT_TYPE_IRQ_MSK_GLOB) {
+		GPII_ERR(gpii, GPI_DBG_COMMON,
+				"processing global error irq\n");
+		gpi_process_glob_err_irq(gpii);
+	}
+
+	/* transfer complete interrupt */
+	if (type & GPI_GPII_n_CNTXT_TYPE_IRQ_MSK_IEOB) {
+		GPII_VERB(gpii, GPI_DBG_COMMON,
+				"process IEOB interrupts\n");
+		gpi_process_ieob(gpii);
+	}
+
+	/* event control irq */
+	if (type & GPI_GPII_n_CNTXT_TYPE_IRQ_MSK_EV_CTRL) {
+		u32 ev_state;
+		u32 ev_ch_irq;
+
+		GPII_INFO(gpii, GPI_DBG_COMMON,
+				"processing EV CTRL interrupt\n");
+		offset = GPI_GPII_n_CNTXT_SRC_EV_CH_IRQ_OFFS(gpii_id);
+		ev_ch_irq = gpi_read_reg(gpii, gpii->regs + offset);
+
+		offset = GPI_GPII_n_CNTXT_SRC_EV_CH_IRQ_CLR_OFFS
+			(gpii_id);
+		gpi_write_reg(gpii, gpii->regs + offset, ev_ch_irq);
+		ev_state = gpi_read_reg(gpii, gpii->ev_cntxt_base_reg +
+				CNTXT_0_CONFIG);
+		ev_state &= GPI_GPII_n_EV_CH_k_CNTXT_0_CHSTATE_BMSK;
+		ev_state >>= GPI_GPII_n_EV_CH_k_CNTXT_0_CHSTATE_SHFT;
+
+		/*
+		 * CMD EV_CMD_DEALLOC is always successful. However
+		 * cmd does not change hardware status. So overwriting
+		 * software state to default state.
+		 */
+		if (gpii->gpi_cmd == GPI_EV_CMD_DEALLOC)
+			ev_state = DEFAULT_EV_CH_STATE;
+
+		gpii->ev_state = ev_state;
+		GPII_INFO(gpii, GPI_DBG_COMMON,
+				"setting EV state to %s\n",
+				TO_GPI_EV_STATE_STR(gpii->ev_state));
+		complete_all(&gpii->cmd_completion);
+	}
+
+	/* channel control irq */
+	if (type & GPI_GPII_n_CNTXT_TYPE_IRQ_MSK_CH_CTRL) {
+		GPII_INFO(gpii, GPI_DBG_COMMON,
+				"process CH CTRL interrupts\n");
+		gpi_process_ch_ctrl_irq(gpii);
+	}
+
+	if (type) {
+		GPII_CRITIC(gpii, GPI_DBG_COMMON,
+				"Unhandled interrupt status:0x%x\n", type);
+		gpi_process_gen_err_irq(gpii);
+	}
+
 	read_unlock_irqrestore(&gpii->pm_lock, flags);
 	GPII_VERB(gpii, GPI_DBG_COMMON, "exit\n");
 
@@ -2312,7 +2327,7 @@ static void gpi_noop_tre(struct gpii_chan *gpii_chan)
 	cntxt_rp = ch_ring->rp;
 
 	GPII_INFO(gpii, gpii_chan->chid,
-		"local_rp:0x%0llx local_wp:0x%0llx\n", local_rp, local_wp);
+		"local_rp:%pap local_wp:%pap\n", &local_rp, &local_wp);
 
 	noop_mask = NOOP_TRE_MASK(1, 0, 0, 0, 1);
 	noop_tre = NOOP_TRE;
@@ -2320,8 +2335,8 @@ static void gpi_noop_tre(struct gpii_chan *gpii_chan)
 	while (local_rp != local_wp) {
 		/* dump the channel ring at the time of error */
 		tre = (struct msm_gpi_tre *)cntxt_rp;
-		GPII_ERR(gpii, gpii_chan->chid, "local_rp:0x%011x TRE: %08x %08x %08x %08x\n",
-			local_rp, tre->dword[0], tre->dword[1],
+		GPII_ERR(gpii, gpii_chan->chid, "local_rp:%pap TRE: %08x %08x %08x %08x\n",
+			&local_rp, tre->dword[0], tre->dword[1],
 			 tre->dword[2], tre->dword[3]);
 		tre->dword[3] &= noop_mask;
 		tre->dword[3] |= noop_tre;
@@ -2332,7 +2347,7 @@ static void gpi_noop_tre(struct gpii_chan *gpii_chan)
 			local_rp = to_physical(ch_ring, ch_ring->base);
 		}
 		GPII_INFO(gpii, gpii_chan->chid,
-			"local_rp:0x%0llx\n", local_rp);
+			"local_rp:%pap\n", &local_rp);
 	}
 
 	GPII_INFO(gpii, gpii_chan->chid, "exit\n");

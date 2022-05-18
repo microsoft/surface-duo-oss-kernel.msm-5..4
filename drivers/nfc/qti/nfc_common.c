@@ -8,6 +8,87 @@
 #include <linux/delay.h>
 #include "nfc_common.h"
 
+#include <linux/skbuff.h>
+#include <linux/slab.h>
+#include <linux/timer.h>
+#include <linux/connector.h>
+
+#if IS_ENABLED(CONFIG_NFC_SURFACE_I2C_TELEMETRY)
+#define NFC_TIMER_INTERVAL_MSECS 1000*60*30u
+static struct cb_id cn_nfc_id = { CN_NETLINK_USERS + 3, 0x456 };
+static char cn_nfc_name[] = "cn_nfc";
+static u32 cn_nfc_timer_counter;
+
+static void nfc_cn_dbg_cb(struct cn_msg *msg, struct netlink_skb_parms *nsp)
+{
+	pr_debug("%s: %lu: idx=%x, val=%x, seq=%u, ack=%u, len=%d: %s.\n",
+	        __func__, jiffies, msg->id.idx, msg->id.val,
+	        msg->seq, msg->ack, msg->len,
+	        msg->len ? (char *)msg->data : "");
+}
+
+static void nfc_cn_nfc_timer_func(struct timer_list *nfc_cn_timer)
+{
+	struct cn_msg *m;
+	char data[32];
+	struct nfc_dev *nfc_dev = container_of(nfc_cn_timer, struct nfc_dev, cn_nfc_timer);
+
+	pr_debug("%s: timer (%d) fired\n", __func__, cn_nfc_timer_counter);
+
+	m = kzalloc(sizeof(*m) + sizeof(data), GFP_ATOMIC);
+	if (m) {
+
+		memcpy(&m->id, &cn_nfc_id, sizeof(m->id));
+		m->seq = cn_nfc_timer_counter;
+		m->len = sizeof(data);
+
+		m->len =
+		    scnprintf(data, sizeof(data), "write errors = %u read errors = %u",
+			      nfc_dev->nfc_i2c_w_error_cnt, nfc_dev->nfc_i2c_r_error_cnt) + 1;
+
+		memcpy(m + 1, data, m->len);
+
+		cn_netlink_send(m, 0, 0, GFP_ATOMIC);
+		kfree(m);
+	}
+
+	cn_nfc_timer_counter++;
+
+	mod_timer(&cn_nfc_timer, jiffies + msecs_to_jiffies(NFC_TIMER_INTERVAL_MSECS));
+}
+
+static int nfc_cn_init(struct nfc_dev *nfc_dev)
+{
+	int err;
+
+	err = cn_add_callback(&cn_nfc_id, cn_nfc_name, nfc_cn_dbg_cb);
+	if (err)
+		return err;
+	cn_nfc_id.val++;
+	err = cn_add_callback(&cn_nfc_id, cn_nfc_name, nfc_cn_dbg_cb);
+	if (err) {
+		cn_del_callback(&cn_nfc_id);
+		return err;
+	}
+
+	timer_setup(&nfc_dev->cn_nfc_timer, nfc_cn_nfc_timer_func, 0);
+	mod_timer(&nfc_dev->cn_nfc_timer, jiffies + msecs_to_jiffies(NFC_TIMER_INTERVAL_MSECS));
+
+	pr_debug("%s initialized with id={%u.%u}\n",
+		__func__, cn_nfc_id.idx, cn_nfc_id.val);
+
+	return 0;
+}
+
+static void nfc_cn_fini(struct nfc_dev *nfc_dev)
+{
+	del_timer_sync(&nfc_dev->cn_nfc_timer);
+	cn_del_callback(&cn_nfc_id);
+	cn_nfc_id.val--;
+	cn_del_callback(&cn_nfc_id);
+}
+
+#endif // CONFIG_NFC_SURFACE_I2C_TELEMETRY
 
 int nfc_parse_dt(struct device *dev, struct platform_gpio *nfc_gpio,
 		 struct platform_ldo *ldo, uint8_t interface)
@@ -107,6 +188,32 @@ int nfc_ldo_vote(struct nfc_dev *nfc_dev)
 	return ret;
 }
 
+static int nfc_ldo_vote_other_regulators(struct nfc_dev *nfc_dev, struct regulator *reg, char *name)
+{
+	int ret;
+
+	ret =  regulator_set_voltage(reg,
+			nfc_dev->ldo.vdd_levels[0],
+			nfc_dev->ldo.vdd_levels[1]);
+	if (ret < 0) {
+		pr_err("%s: %s set voltage failed\n", __func__, name);
+		return ret;
+	}
+
+	/* pass expected current from NFC in uA */
+	ret = regulator_set_load(reg, nfc_dev->ldo.max_current);
+	if (ret < 0) {
+		pr_err("%s: %s set load failed\n", __func__, name);
+		return ret;
+	}
+
+	ret = regulator_enable(reg);
+	if (ret < 0)
+		pr_err("%s: %s regulator_enable failed\n", __func__, name);
+
+	return ret;
+}
+
 /**
  * nfc_ldo_config()
  * @dev: device instance to read DT entry
@@ -121,6 +228,11 @@ int nfc_ldo_config(struct device *dev, struct nfc_dev *nfc_dev)
 {
 	int ret;
 
+	if (!of_parse_phandle(dev->of_node, NFC_LDO_SUPPLY_NAME, 0)) {
+		pr_err("%s: Unable to find %s regulator, assuming enabled\n",
+			 __func__, NFC_LDO_SUPPLY_NAME);
+		return 0;
+	}
 	if (of_get_property(dev->of_node, NFC_LDO_SUPPLY_NAME, NULL)) {
 		// Get the regulator handle
 		nfc_dev->reg = regulator_get(dev, NFC_LDO_SUPPLY_DT_NAME);
@@ -145,6 +257,32 @@ int nfc_ldo_config(struct device *dev, struct nfc_dev *nfc_dev)
 		regulator_put(nfc_dev->reg);
 	}
 	return ret;
+}
+
+static void nfc_ldo_config_other_regulators(struct nfc_dev *nfc_dev)
+{
+	int ret;
+	struct device *dev = &(nfc_dev->i2c_dev.client->dev);
+
+	pr_debug("%s trying to get regulator ms,nq-i2cdatascl\n", __func__);
+	if (of_get_property(dev->of_node, "ms,nq-i2cdatascl-supply", NULL)) {
+		// Get the regulator handle
+		nfc_dev->i2c_data_scl_reg = regulator_get(dev, "ms,nq-i2cdatascl");
+		if (IS_ERR(nfc_dev->i2c_data_scl_reg)) {
+			ret = PTR_ERR(nfc_dev->i2c_data_scl_reg);
+			nfc_dev->i2c_data_scl_reg = NULL;
+			pr_err("%s: regulator_get failed for regulator %s, ret = %d\n",
+				__func__, "ms,nq-i2cdatascl", ret);
+			return;
+		}
+	} else {
+		nfc_dev->i2c_data_scl_reg = NULL;
+		pr_err("%s: %s regulator entry not present\n", __func__, "ms,nq-i2cdatascl");
+		// return success as it's optional to configure LDO
+		return;
+	}
+
+	nfc_ldo_vote_other_regulators(nfc_dev, nfc_dev->i2c_data_scl_reg, "ms,nq-i2cdatascl");
 }
 
 /**
@@ -188,7 +326,7 @@ void gpio_set_ven(struct nfc_dev *nfc_dev, int value)
 	if (gpio_get_value(nfc_dev->gpio.ven) != value) {
 		gpio_set_value(nfc_dev->gpio.ven, value);
 		// hardware dependent delay
-		usleep_range(10000, 10100);
+		usleep_range(100000, 101000);
 	}
 }
 
@@ -250,6 +388,10 @@ void nfc_misc_remove(struct nfc_dev *nfc_dev, int count)
 	unregister_chrdev_region(nfc_dev->devno, count);
 	if (nfc_dev->ipcl)
 		ipc_log_context_destroy(nfc_dev->ipcl);
+#if IS_ENABLED(CONFIG_NFC_SURFACE_I2C_TELEMETRY)
+	nfc_cn_fini();
+#endif
+
 }
 
 int nfc_misc_probe(struct nfc_dev *nfc_dev,
@@ -305,6 +447,10 @@ int nfc_misc_probe(struct nfc_dev *nfc_dev,
 	nfc_dev->cold_reset.rsp_pending = false;
 	nfc_dev->cold_reset.is_nfc_enabled = false;
 	init_waitqueue_head(&nfc_dev->cold_reset.read_wq);
+
+#if IS_ENABLED(CONFIG_NFC_SURFACE_I2C_TELEMETRY)
+	nfc_cn_init(nfc_dev);
+#endif
 
 	return 0;
 }
@@ -756,6 +902,195 @@ int is_data_available_for_read(struct nfc_dev *nfc_dev)
 	return ret;
 }
 
+// MSCHANGE: Start - Additional initializations
+static int ms_nfcc_init_enable_standby(struct nfc_dev *nfc_dev) {
+	int ret = 0;
+	char *nci_core_init_cmd = NULL;
+	char *nci_core_init_rsp = NULL;
+	char *nxp_enable_proprietary_cmd = NULL;
+	char *nxp_enable_proprietary_rsp = NULL;
+	char *nxp_enable_standby_cmd = NULL;
+	char *nxp_enable_standby_rsp = NULL;
+
+	nci_core_init_cmd = kzalloc(NCI_CORE_INIT_CMD_LEN + 1,
+					GFP_DMA | GFP_KERNEL);
+	if (!nci_core_init_cmd) {
+		ret = -ENOMEM;
+		goto done_ms_init;
+	}
+
+	nci_core_init_rsp = kzalloc(NCI_CORE_INIT_RSP_LEN + 1,
+					GFP_DMA | GFP_KERNEL);
+	if (!nci_core_init_rsp) {
+		ret = -ENOMEM;
+		goto done_ms_init;
+	}
+
+	nxp_enable_proprietary_cmd = kzalloc(NXP_ENABLE_PROPRIETARY_CMD_LEN + 1,
+					GFP_DMA | GFP_KERNEL);
+	if (!nxp_enable_proprietary_cmd) {
+		ret = -ENOMEM;
+		goto done_ms_init;
+	}
+
+	nxp_enable_proprietary_rsp = kzalloc(NXP_ENABLE_PROPRIETARY_RSP_LEN + 1,
+					GFP_DMA | GFP_KERNEL);
+	if (!nxp_enable_proprietary_rsp) {
+		ret = -ENOMEM;
+		goto done_ms_init;
+	}
+
+	nxp_enable_standby_cmd = kzalloc(NXP_ENABLE_STANDBY_CMD_LEN + 1,
+					GFP_DMA | GFP_KERNEL);
+	if (!nxp_enable_standby_cmd) {
+		ret = -ENOMEM;
+		goto done_ms_init;
+	}
+
+	nxp_enable_standby_rsp = kzalloc(NXP_ENABLE_STANDBY_RSP_LEN + 1,
+					GFP_DMA | GFP_KERNEL);
+	if (!nxp_enable_standby_rsp) {
+		ret = -ENOMEM;
+		goto done_ms_init;
+	}
+
+	// Core Init
+	nci_core_init_cmd[0] = 0x20;
+	nci_core_init_cmd[1] = 0x01;
+	nci_core_init_cmd[2] = 0x02;
+	nci_core_init_cmd[3] = 0x00;
+	nci_core_init_cmd[4] = 0x00;
+
+	ret = nfc_dev->nfc_write(nfc_dev, nci_core_init_cmd, NCI_CORE_INIT_CMD_LEN,
+				MAX_RETRY_COUNT);
+	if (ret <= 0) {
+		pr_err("%s: write error - nci_core_init_cmd\n", __func__);
+		ret = -1;
+		goto done_ms_init;
+	} else {
+		pr_info("%s: write success - nci_core_init_cmd\n", __func__);
+	}
+
+	// Is core init response available to read?
+	if (nfc_dev->interface == PLATFORM_IF_I2C) {
+		ret = is_data_available_for_read(nfc_dev);
+		if (ret <= 0) {
+			pr_err("%s: error waiting for nci_core_init_rsp ret %d\n",
+					__func__, ret);
+			nfc_dev->nfc_disable_intr(nfc_dev);
+			ret = -1;
+			goto done_ms_init;
+		} else {
+			pr_info("%s: data available to read - nci_core_init_rsp", __func__);
+		}
+	}
+
+	/* Core init response*/
+	ret = nfc_dev->nfc_read(nfc_dev, nci_core_init_rsp, NCI_CORE_INIT_RSP_LEN);
+	if (ret <= 0) {
+		pr_err("%s: read error %d\n", __func__, ret);
+		ret = -1;
+		goto done_ms_init;
+	} else {
+		pr_info("%s: nci_core_init_rsp - status 0x%x\n", __func__,
+					nci_core_init_rsp[NCI_HDR_LEN]);
+	}
+
+	/* Enable proprietary commands */
+	nxp_enable_proprietary_cmd[0] = 0x2F;
+	nxp_enable_proprietary_cmd[1] = 0x02;
+	nxp_enable_proprietary_cmd[2] = 0x00;
+
+	ret = nfc_dev->nfc_write(nfc_dev, nxp_enable_proprietary_cmd, NXP_ENABLE_PROPRIETARY_CMD_LEN,
+				MAX_RETRY_COUNT);
+	if (ret <= 0) {
+		pr_err("%s: write error - nxp_enable_proprietary_cmd %d\n", __func__, ret);
+		ret = -1;
+		goto done_ms_init;
+	} else {
+		pr_info("%s: write success - nxp_enable_proprietary_cmd\n", __func__);
+	}
+
+	// Is response to enable proprietary commands available to read?
+	if (nfc_dev->interface == PLATFORM_IF_I2C) {
+		ret = is_data_available_for_read(nfc_dev);
+		if (ret <= 0) {
+			pr_err("%s: error waiting for nxp_enable_proprietary_rsp - ret %d\n",
+					__func__, ret);
+			nfc_dev->nfc_disable_intr(nfc_dev);
+			ret = -1;
+			goto done_ms_init;
+		} else {
+			pr_info("%s: nxp_enable_proprietary_rsp - data available to read\n", __func__);
+		}
+	}
+
+	/* Enable proprietary command response*/
+	ret = nfc_dev->nfc_read(nfc_dev, nxp_enable_proprietary_rsp, NXP_ENABLE_PROPRIETARY_RSP_LEN);
+	if (ret <= 0) {
+		pr_err("%s: read error - nxp_enable_proprietary_rsp %d\n", __func__, ret);
+		ret = -1;
+		goto done_ms_init;
+	} else {
+		pr_info("%s: nxp_enable_proprietary_rsp - status %x\n", __func__,
+					nxp_enable_proprietary_rsp[NCI_HDR_LEN]);
+	}
+
+	/* Enable standby command */
+	nxp_enable_standby_cmd[0] = 0x2F;
+	nxp_enable_standby_cmd[1] = 0x00;
+	nxp_enable_standby_cmd[2] = 0x01;
+	nxp_enable_standby_cmd[3] = 0x01;
+
+	ret = nfc_dev->nfc_write(nfc_dev, nxp_enable_standby_cmd, NXP_ENABLE_STANDBY_CMD_LEN,
+				MAX_RETRY_COUNT);
+	if (ret <= 0) {
+		pr_err("%s: write error - nxp_enable_standby_cmd \n", __func__);
+		ret = -1;
+		goto done_ms_init;
+	}
+
+	// Is enable standby response available to read?
+	if (nfc_dev->interface == PLATFORM_IF_I2C) {
+		ret = is_data_available_for_read(nfc_dev);
+		if (ret <= 0) {
+			pr_err("%s: error waiting for nxp_enable_standby_rsp - ret %d\n",
+					__func__, ret);
+			nfc_dev->nfc_disable_intr(nfc_dev);
+			ret = -1;
+			goto done_ms_init;
+		} else {
+			pr_info("%s: nxp_enable_standby_rsp - data available to read\n", __func__);
+		}
+	}
+
+	/* Read nxp_enable_standby_rsp*/
+	ret = nfc_dev->nfc_read(nfc_dev, nxp_enable_standby_rsp, NXP_ENABLE_STANDBY_RSP_LEN);
+	if (ret <= 0) {
+		pr_err("%s: read error for nxp_enable_standby_rsp %d\n", __func__, ret);
+		ret = -1;
+		goto done_ms_init;
+	} else {
+		pr_info("%s: nfc read - nxp_enable_standby_rsp = 0x%x%x%x%x\n", __func__,
+					nxp_enable_standby_rsp[0],
+					nxp_enable_standby_rsp[1],
+					nxp_enable_standby_rsp[2],
+					nxp_enable_standby_rsp[3]);
+	}
+
+done_ms_init:
+	kfree(nci_core_init_cmd);
+	kfree(nci_core_init_rsp);
+	kfree(nxp_enable_proprietary_cmd);
+	kfree(nxp_enable_proprietary_rsp);
+	kfree(nxp_enable_standby_cmd);
+	kfree(nxp_enable_standby_rsp);
+
+	return ret;
+
+}
+// MSCHANGE: End - Additional initializations
+
 /* Check for availability of NFC controller hardware */
 int nfcc_hw_check(struct nfc_dev *nfc_dev)
 {
@@ -803,10 +1138,14 @@ int nfcc_hw_check(struct nfc_dev *nfc_dev)
 		nfc_dev->nfc_enable_intr(nfc_dev);
 	else {
 		/* making sure that the NFCC starts in a clean state. */
-		gpio_set_ven(nfc_dev, 1);/* HPD : Enable*/
+		// gpio_set_ven(nfc_dev, 1);/* HPD : Enable*/
 		gpio_set_ven(nfc_dev, 0);/* ULPM: Disable */
+		usleep_range(100000, 101000);
 		gpio_set_ven(nfc_dev, 1);/* HPD : Enable*/
 	}
+
+	// Bringup pmuvcc regulators
+	nfc_ldo_config_other_regulators(nfc_dev);
 
 	nci_reset_cmd[0] = 0x20;
 	nci_reset_cmd[1] = 0x00;
@@ -826,6 +1165,7 @@ int nfcc_hw_check(struct nfc_dev *nfc_dev)
 
 		if (nfc_dev->interface == PLATFORM_IF_I2C) {
 			gpio_set_ven(nfc_dev, 0);
+			usleep_range(100000, 101000);
 			gpio_set_ven(nfc_dev, 1);
 		}
 
@@ -876,6 +1216,8 @@ int nfcc_hw_check(struct nfc_dev *nfc_dev)
 		gpio_set_value(nfc_dev->gpio.dwl_req, 0);
 
 		goto err_nfcc_reset_failed;
+	} else {
+		pr_info("%s: nfc write success - nci_reset_cmd\n", __func__);
 	}
 
 	if (nfc_dev->interface == PLATFORM_IF_I2C) {
@@ -886,15 +1228,23 @@ int nfcc_hw_check(struct nfc_dev *nfc_dev)
 					__func__, ret);
 
 			goto err_nfcc_hw_check;
+		} else {
+			pr_info("%s: nfc data available to read - nci_reset_rsp\n", __func__);
 		}
 	}
 
 	/* Read Response of RESET command */
 	ret = nfc_dev->nfc_read(nfc_dev, nci_reset_rsp, NCI_RESET_RSP_LEN);
 	if (ret <= 0) {
-		pr_err("%s: - nfc rst rsp read err %d\n", __func__,
+		pr_err("%s: - nfc read error - nci_reset_rsp- ret = %d\n", __func__,
 					ret);
 		goto err_nfcc_hw_check;
+	} else {
+		pr_info("%s: nci_reset_rsp - 0x%02x%02x%02x%02x\n", __func__,
+					nci_reset_rsp[0],
+					nci_reset_rsp[1],
+					nci_reset_rsp[2],
+					nci_reset_rsp[3]);
 	}
 
 	if (nfc_dev->interface == PLATFORM_IF_I2C) {
@@ -904,14 +1254,22 @@ int nfcc_hw_check(struct nfc_dev *nfc_dev)
 					__func__, ret);
 			nfc_dev->nfc_disable_intr(nfc_dev);
 			goto err_nfcc_hw_check;
+		} else {
+			pr_info("%s: data available to read - nci_reset_ntf\n", __func__);
 		}
 	}
 
 	/* Read Notification of RESET command */
 	ret = nfc_dev->nfc_read(nfc_dev, nci_reset_ntf, NCI_RESET_NTF_LEN);
 	if (ret <= 0) {
-		pr_err("%s: nfc nfc read error %d\n", __func__, ret);
+		pr_err("%s: nfc read error - nci_reset_ntf %d\n", __func__, ret);
 		goto err_nfcc_hw_check;
+	}
+	else {
+		pr_info("%s: nfc nci_reset_ntf- firmware version 0x%02x%02x%02x\n", __func__,
+					nci_reset_ntf[10],
+					nci_reset_ntf[11],
+					nci_reset_ntf[12]);
 	}
 
 	reset_ntf_len = NCI_HDR_LEN + nci_reset_ntf[NCI_PAYLOAD_LEN_IDX] - 1;
@@ -925,14 +1283,14 @@ int nfcc_hw_check(struct nfc_dev *nfc_dev)
 		nfc_dev->nqx_info.info.fw_minor =
 				nci_reset_ntf[reset_ntf_len];
 	}
-	pr_debug("%s: - NFC reset rsp : NfcNciRx %x %x %x\n",
+	pr_info("%s: - NFC reset rsp : NfcNciRx %x %x %x\n",
 		__func__, nci_reset_rsp[0],
 		nci_reset_rsp[1], nci_reset_rsp[2]);
 
 err_nfcc_reset_failed:
-	pr_info("NFC chip_type = %x\n",
+	pr_info(" %s NFC chip_type = %x\n", __func__,
 		nfc_dev->nqx_info.info.chip_type);
-	pr_info("NFC fw version = %x.%x.%x\n",
+	pr_info("%s NFC fw version = %x.%x.%x\n", __func__,
 		nfc_dev->nqx_info.info.rom_version,
 		nfc_dev->nqx_info.info.fw_major,
 		nfc_dev->nqx_info.info.fw_minor);
@@ -943,13 +1301,19 @@ err_nfcc_reset_failed:
 		pr_debug("%s: ## NFCC == SN100x ##\n", __func__);
 		break;
 	default:
-		pr_err("%s: - NFCC HW not Supported\n", __func__);
+		pr_err("%s: - NFCC HW not Supported - chip type 0x%x\n", __func__,
+					(uint8_t) nfc_dev->nqx_info.info.chip_type);
 		break;
+	}
+
+	// MSCHANGE: Additional initializations
+	ret = ms_nfcc_init_enable_standby(nfc_dev);
+	if (ret < 0) {
+		pr_err("%s: failed performing additional initializations\n", __func__);
 	}
 
 	ret = 0;
 	nfc_dev->nfc_ven_enabled = true;
-
 	goto disable_i3c_intr;
 
 err_nfcc_hw_check:
@@ -959,17 +1323,18 @@ err_nfcc_hw_check:
 	gpio_set_value(nfc_dev->gpio.dwl_req, 0);
 
 	ret = -ENXIO;
-	pr_debug("%s: - NFCC HW not available\n", __func__);
+	pr_err("%s: - NFCC HW not available\n", __func__);
 
 disable_i3c_intr:
 	if (nfc_dev->interface == PLATFORM_IF_I3C)
 		nfc_dev->nfc_disable_intr(nfc_dev);
+
+
 done:
 	kfree(nci_reset_rsp);
 	kfree(nci_reset_ntf);
 	kfree(nci_get_version_cmd);
 	kfree(nci_get_version_rsp);
 	kfree(nci_reset_cmd);
-
 	return ret;
 }

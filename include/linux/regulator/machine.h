@@ -253,7 +253,7 @@ static inline void regulator_has_full_constraints(void)
 }
 #endif
 
-#ifdef CONFIG_REGULATOR_QTI_DEBUG
+#if defined(CONFIG_REGULATOR_QTI_DEBUG) || defined(CONFIG_REGULATOR_SURFACE_DEBUG)
 void regulator_debug_print_enabled(void);
 #else
 static inline void regulator_debug_print_enabled(void)

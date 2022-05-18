@@ -1088,6 +1088,12 @@ static long bt_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	int itr, num_vregs;
 	struct bt_power_vreg_data *vreg_info = NULL;
 
+	/* MSFT Start */
+	/* To avoid device crash caused by BT power driver probe if Bluetooth node is disable in lahaiha device tree */
+	if (!bt_power_pdata)
+		return -ENODEV;
+	/* MSFT End */
+
 	switch (cmd) {
 	case BT_CMD_SLIM_TEST:
 #if (defined CONFIG_BT_SLIM_QCA6390 || \

@@ -1468,7 +1468,8 @@ static int haptics_open_loop_drive_config(struct haptics_chip *chip, bool en)
 	u8 val;
 
 	if ((is_boost_vreg_enabled_in_open_loop(chip) ||
-	     is_haptics_external_powered(chip)) && en) {
+        chip->hboost_enabled ||
+        is_haptics_external_powered(chip)) && en) {
 		/* Force VREG_RDY */
 		rc = haptics_masked_write(chip, chip->cfg_addr_base,
 				HAP_CFG_VSET_CFG_REG, FORCE_VREG_RDY_BIT,
@@ -2536,7 +2537,7 @@ static int haptics_erase(struct input_dev *dev, int effect_id)
 
 	rc = haptics_enable_hpwr_vreg(chip, false);
 	if (rc < 0)
-		dev_err(chip->dev, "disable hpwr_vreg failed, rc=%d\n");
+		dev_err(chip->dev, "disable hpwr_vreg failed, rc=%d\n", rc);
 
 	return rc;
 }
@@ -4783,7 +4784,7 @@ static int haptics_suspend(struct device *dev)
 
 		rc = haptics_stop_fifo_play(chip);
 		if (rc < 0) {
-			dev_err(chip->dev, "stop FIFO playing failed, rc=%d\n");
+			dev_err(chip->dev, "stop FIFO playing failed, rc=%d\n", rc);
 			mutex_unlock(&play->lock);
 			return rc;
 		}
