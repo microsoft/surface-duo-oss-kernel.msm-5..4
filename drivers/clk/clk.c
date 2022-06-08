@@ -86,9 +86,11 @@ struct clk_core {
 	struct hlist_node	child_node;
 	struct hlist_head	clks;
 	unsigned int		notifier_count;
+#if defined(CONFIG_DEBUG_FS) || defined(CONFIG_SURFACE_CLK_DEBUG)
+	struct hlist_node	debug_node;
+#endif
 #ifdef CONFIG_DEBUG_FS
 	struct dentry		*dentry;
-	struct hlist_node	debug_node;
 #endif
 	struct kref		ref;
 };
@@ -2953,13 +2955,15 @@ EXPORT_SYMBOL_GPL(clk_is_match);
 
 /***        debugfs support        ***/
 
+#if defined(CONFIG_DEBUG_FS) || defined(CONFIG_SURFACE_CLK_DEBUG)
+static DEFINE_MUTEX(clk_debug_lock);
+static HLIST_HEAD(clk_debug_list);
+
 #ifdef CONFIG_DEBUG_FS
 #include <linux/debugfs.h>
 
 static struct dentry *rootdir;
 static int inited = 0;
-static DEFINE_MUTEX(clk_debug_lock);
-static HLIST_HEAD(clk_debug_list);
 
 static struct hlist_head *orphan_list[] = {
 	&clk_orphan_list,
@@ -3358,8 +3362,10 @@ static void clk_debug_unregister(struct clk_core *core)
 	core->dentry = NULL;
 	mutex_unlock(&clk_debug_lock);
 }
+#endif /* CONFIG_DEBUG_FS */
 
-#ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
+#if defined(CONFIG_COMMON_CLK_QCOM_DEBUG) || defined(CONFIG_SURFACE_CLK_DEBUG)
+
 #define clock_debug_output(m, c, fmt, ...)		\
 do {							\
 	if (m)						\
@@ -3384,6 +3390,7 @@ static int clock_debug_print_clock(struct clk_core *c, struct seq_file *s)
 
 	do {
 		c = clk->core;
+		#if defined(CONFIG_COMMON_CLK_QCOM_DEBUG)
 		if (c->ops->list_rate_vdd_level)
 			clock_debug_output(s, 1, "%s%s:%u:%u [%ld, %d]", start,
 				c->name,
@@ -3397,6 +3404,13 @@ static int clock_debug_print_clock(struct clk_core *c, struct seq_file *s)
 				c->prepare_count,
 				c->enable_count,
 				c->rate);
+		#else
+		clock_debug_output(s, 1, "%s%s:%u:%u [%ld]", start,
+				c->name,
+				c->prepare_count,
+				c->enable_count,
+				c->rate);
+		#endif
 		start = " -> ";
 	} while ((clk = clk_get_parent(clk)));
 
@@ -3447,7 +3461,7 @@ static const struct file_operations clk_enabled_list_fops = {
 	.release	= seq_release,
 };
 
-static u32 debug_suspend;
+static u32 debug_suspend = 1; // MSCHANGE
 
 /*
  * Print the names of all enabled clocks and their parents if
@@ -3466,6 +3480,8 @@ void clock_debug_print_enabled(void)
 	mutex_unlock(&clk_debug_lock);
 }
 EXPORT_SYMBOL(clock_debug_print_enabled);
+
+#ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
 
 static void clk_state_subtree(struct clk_core *c)
 {
@@ -3513,7 +3529,10 @@ static const struct file_operations clk_state_fops = {
 	.llseek		= seq_lseek,
 	.release	= single_release,
 };
-#endif
+#endif /* CONFIG_COMMON_CLK_QCOM_DEBUG */
+#endif /* CONFIG_COMMON_CLK_QCOM_DEBUG or CONFIG_SURFACE_CLK_DEBUG */
+
+#ifdef CONFIG_DEBUG_FS
 
 /**
  * clk_debug_init - lazily populate the debugfs clk directory
@@ -3557,6 +3576,22 @@ static int __init clk_debug_init(void)
 	return 0;
 }
 late_initcall(clk_debug_init);
+#elif defined(CONFIG_SURFACE_CLK_DEBUG)
+static void clk_debug_register(struct clk_core *core)
+{
+	pr_err("VLD IN CLK_DEBUG_REGISTER \n");
+	mutex_lock(&clk_debug_lock);
+	hlist_add_head(&core->debug_node, &clk_debug_list);
+	mutex_unlock(&clk_debug_lock);
+}
+static void clk_debug_unregister(struct clk_core *core)
+{
+	pr_err("VLD IN CLK_DEBUG_UNREGISTER \n");
+	mutex_lock(&clk_debug_lock);
+	hlist_del_init(&core->debug_node);
+	mutex_unlock(&clk_debug_lock);
+}
+#endif
 #else
 static inline void clk_debug_register(struct clk_core *core) { }
 static inline void clk_debug_reparent(struct clk_core *core,
@@ -3566,7 +3601,7 @@ static inline void clk_debug_reparent(struct clk_core *core,
 static inline void clk_debug_unregister(struct clk_core *core)
 {
 }
-#endif
+#endif  /* CONFIG_DEBUG_FS or CONFIG_SURFACE_CLK_DEBUG */
 
 static void clk_core_reparent_orphans_nolock(void)
 {
@@ -4468,20 +4503,19 @@ int clk_notifier_register(struct clk *clk, struct notifier_block *nb)
 	/* search the list of notifiers for this clk */
 	list_for_each_entry(cn, &clk_notifier_list, node)
 		if (cn->clk == clk)
-			break;
+			goto found;
 
 	/* if clk wasn't in the notifier list, allocate new clk_notifier */
-	if (cn->clk != clk) {
-		cn = kzalloc(sizeof(*cn), GFP_KERNEL);
-		if (!cn)
-			goto out;
+	cn = kzalloc(sizeof(*cn), GFP_KERNEL);
+	if (!cn)
+		goto out;
 
-		cn->clk = clk;
-		srcu_init_notifier_head(&cn->notifier_head);
+	cn->clk = clk;
+	srcu_init_notifier_head(&cn->notifier_head);
 
-		list_add(&cn->node, &clk_notifier_list);
-	}
+	list_add(&cn->node, &clk_notifier_list);
 
+found:
 	ret = srcu_notifier_chain_register(&cn->notifier_head, nb);
 
 	clk->core->notifier_count++;
@@ -4506,32 +4540,28 @@ EXPORT_SYMBOL_GPL(clk_notifier_register);
  */
 int clk_notifier_unregister(struct clk *clk, struct notifier_block *nb)
 {
-	struct clk_notifier *cn = NULL;
-	int ret = -EINVAL;
+	struct clk_notifier *cn;
+	int ret = -ENOENT;
 
 	if (!clk || !nb)
 		return -EINVAL;
 
 	clk_prepare_lock();
 
-	list_for_each_entry(cn, &clk_notifier_list, node)
-		if (cn->clk == clk)
+	list_for_each_entry(cn, &clk_notifier_list, node) {
+		if (cn->clk == clk) {
+			ret = srcu_notifier_chain_unregister(&cn->notifier_head, nb);
+
+			clk->core->notifier_count--;
+
+			/* XXX the notifier code should handle this better */
+			if (!cn->notifier_head.head) {
+				srcu_cleanup_notifier_head(&cn->notifier_head);
+				list_del(&cn->node);
+				kfree(cn);
+			}
 			break;
-
-	if (cn->clk == clk) {
-		ret = srcu_notifier_chain_unregister(&cn->notifier_head, nb);
-
-		clk->core->notifier_count--;
-
-		/* XXX the notifier code should handle this better */
-		if (!cn->notifier_head.head) {
-			srcu_cleanup_notifier_head(&cn->notifier_head);
-			list_del(&cn->node);
-			kfree(cn);
 		}
-
-	} else {
-		ret = -ENOENT;
 	}
 
 	clk_prepare_unlock();

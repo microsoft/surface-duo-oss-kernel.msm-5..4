@@ -41,8 +41,6 @@ if test $# -gt 0; then
 		kmi_generation=$1
 		[ $(expr $kmi_generation : '^[0-9]\+$') -eq 0 ] && usage
 		shift
-	else
-		usage
 	fi
 fi
 if test $# -gt 0 -o ! -d "$srctree"; then
@@ -69,6 +67,8 @@ scm_version()
 
 		if [ -n "$android_release" ] && [ -n "$kmi_generation" ]; then
 			printf '%s' "-$android_release-$kmi_generation"
+		elif [ -n "$android_release" ]; then
+			printf '%s' "-$android_release"
 		fi
 
 		# If we are at a tagged commit (like "v2.6.30-rc6"), we ignore
@@ -204,6 +204,27 @@ res="${res}${CONFIG_LOCALVERSION}${LOCALVERSION}"
 if test "$CONFIG_LOCALVERSION_AUTO" = "y"; then
 	# full scm version string
 	res="$res$(scm_version)"
+
+	# MSCHANGE Use custom version
+	if test -z "${AZBUILDVER}"; then
+		AZBUILDVER="0.0.0"
+	fi
+	AZBUILDVER=$(echo ${AZBUILDVER} | tr '\.' '_')
+
+	if [ "${KERNEL_DEFCONFIG}" = "lahaina-qgki-debug_defconfig" ]
+	then
+		res="-c1-d-${AZBUILDVER}"
+	elif [ "${KERNEL_DEFCONFIG}" = "lahaina-qgki_defconfig" ]
+	then
+		res="-c1-p-${AZBUILDVER}"
+	elif [ "${KERNEL_DEFCONFIG}" = "lahaina-gki_defconfig" ]
+	then
+		res="-c1-g-${AZBUILDVER}"
+	else
+		#Make sure this is > 64 chars to fail the build
+		res="UNKNOWN KERNEL CONFIG ${KERNEL_DEFCONFIG} - ERROR ----------------------------------------------------------------"
+	fi
+	# MSCHANGE End
 else
 	# append a plus sign if the repository is not in a clean
 	# annotated or signed tagged state (as git describe only

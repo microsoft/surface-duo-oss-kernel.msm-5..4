@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
 #include "nfc_common.h"
@@ -189,6 +189,7 @@ ssize_t nfc_i2c_dev_read(struct file *filp, char __user *buf,
 	ret = i2c_read(nfc_dev, tmp, count);
 	if (ret <= 0) {
 		pr_err("%s: i2c_master_recv returned %d\n", __func__, ret);
+		nfc_dev->nfc_i2c_r_error_cnt++;
 		goto err;
 	}
 
@@ -248,6 +249,7 @@ ssize_t nfc_i2c_dev_write(struct file *filp, const char __user *buf,
 	ret = i2c_write(nfc_dev, tmp, count, NO_RETRY);
 	if (ret != count) {
 		pr_err("%s: failed to write %d\n", __func__, ret);
+		nfc_dev->nfc_i2c_w_error_cnt++;
 		ret = -EIO;
 		goto out_free;
 	}
@@ -303,6 +305,8 @@ int nfc_i2c_dev_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	nfc_dev->nfc_write = i2c_write;
 	nfc_dev->nfc_enable_intr = i2c_enable_irq;
 	nfc_dev->nfc_disable_intr = i2c_disable_irq;
+	nfc_dev->nfc_i2c_w_error_cnt = 0;
+	nfc_dev->nfc_i2c_r_error_cnt = 0;
 
 	ret = configure_gpio(nfc_gpio.ven, GPIO_OUTPUT);
 	if (ret) {
@@ -452,7 +456,14 @@ int nfc_i2c_dev_suspend(struct device *device)
 {
 	struct i2c_client *client = to_i2c_client(device);
 	struct nfc_dev *nfc_dev = i2c_get_clientdata(client);
-	struct i2c_dev *i2c_dev = &nfc_dev->i2c_dev;
+	struct i2c_dev *i2c_dev = NULL;
+
+	if (!nfc_dev) {
+		pr_err("%s: device doesn't exist anymore\n", __func__);
+		return -ENODEV;
+	}
+
+	i2c_dev = &nfc_dev->i2c_dev;
 
 	NFCLOG_IPC(nfc_dev, false, "%s: irq_enabled = %d", __func__,
 							i2c_dev->irq_enabled);
@@ -468,7 +479,14 @@ int nfc_i2c_dev_resume(struct device *device)
 {
 	struct i2c_client *client = to_i2c_client(device);
 	struct nfc_dev *nfc_dev = i2c_get_clientdata(client);
-	struct i2c_dev *i2c_dev = &nfc_dev->i2c_dev;
+	struct i2c_dev *i2c_dev = NULL;
+
+	if (!nfc_dev) {
+		pr_err("%s: device doesn't exist anymore\n", __func__);
+		return -ENODEV;
+	}
+
+	i2c_dev = &nfc_dev->i2c_dev;
 
 	NFCLOG_IPC(nfc_dev, false, "%s: irq_wake_up = %d", __func__,
 							i2c_dev->irq_wake_up);

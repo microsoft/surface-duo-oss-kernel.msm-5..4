@@ -33,6 +33,11 @@
 #include <linux/sched/stat.h>
 #include <linux/rcupdate.h>
 #include <linux/psci.h>
+// MSCHANGE start
+#ifdef CONFIG_SURFACE_GPIO_DEBUG
+#include <linux/ms_gpio_verifier.h>
+#endif
+// MSCHANGE start
 #include <soc/qcom/pm.h>
 #include <soc/qcom/lpm_levels.h>
 #include <soc/qcom/lpm-stats.h>
@@ -1718,6 +1723,11 @@ static void register_cluster_lpm_stats(struct lpm_cluster *cl,
 static int lpm_suspend_prepare(void)
 {
 	suspend_in_progress = true;
+// MSCHANGE start
+#ifdef CONFIG_SURFACE_GPIO_DEBUG
+	read_all_gpio(MS_GPIO_SLEEP_STATE);
+#endif
+// MSCHANGE start
 	lpm_stats_suspend_enter();
 
 	return 0;

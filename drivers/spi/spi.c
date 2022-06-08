@@ -47,10 +47,6 @@ static void spidev_release(struct device *dev)
 {
 	struct spi_device	*spi = to_spi_device(dev);
 
-	/* spi controllers may cleanup for released devices */
-	if (spi->controller->cleanup)
-		spi->controller->cleanup(spi);
-
 	spi_controller_put(spi->controller);
 	kfree(spi->driver_override);
 	kfree(spi);
@@ -549,6 +545,12 @@ static int spi_dev_check(struct device *dev, void *data)
 	return 0;
 }
 
+static void spi_cleanup(struct spi_device *spi)
+{
+	if (spi->controller->cleanup)
+		spi->controller->cleanup(spi);
+}
+
 /**
  * spi_add_device - Add spi_device allocated with spi_alloc_device
  * @spi: spi_device to register
@@ -613,11 +615,13 @@ int spi_add_device(struct spi_device *spi)
 
 	/* Device may be bound to an active driver when this returns */
 	status = device_add(&spi->dev);
-	if (status < 0)
+	if (status < 0) {
 		dev_err(dev, "can't add %s, status %d\n",
 				dev_name(&spi->dev), status);
-	else
+		spi_cleanup(spi);
+	} else {
 		dev_dbg(dev, "registered child %s\n", dev_name(&spi->dev));
+	}
 
 done:
 	mutex_unlock(&spi_add_lock);
@@ -710,7 +714,9 @@ void spi_unregister_device(struct spi_device *spi)
 	}
 	if (ACPI_COMPANION(&spi->dev))
 		acpi_device_clear_enumerated(ACPI_COMPANION(&spi->dev));
-	device_unregister(&spi->dev);
+	device_del(&spi->dev);
+	spi_cleanup(spi);
+	put_device(&spi->dev);
 }
 EXPORT_SYMBOL_GPL(spi_unregister_device);
 
@@ -1455,16 +1461,32 @@ static void spi_set_thread_rt(struct spi_controller *ctlr)
 
 static int spi_init_queue(struct spi_controller *ctlr)
 {
+	cpumask_t cpumask;
+
 	ctlr->running = false;
 	ctlr->busy = false;
 
 	kthread_init_worker(&ctlr->kworker);
-	ctlr->kworker_task = kthread_run(kthread_worker_fn, &ctlr->kworker,
+	ctlr->kworker_task = kthread_create(kthread_worker_fn, &ctlr->kworker,
 					 "%s", dev_name(&ctlr->dev));
 	if (IS_ERR(ctlr->kworker_task)) {
 		dev_err(&ctlr->dev, "failed to create message pump task\n");
 		return PTR_ERR(ctlr->kworker_task);
 	}
+
+	cpumask_set_cpu(0, &cpumask);
+	cpumask_set_cpu(1, &cpumask);
+	cpumask_set_cpu(2, &cpumask);
+	cpumask_set_cpu(3, &cpumask);
+
+	cpumask_clear_cpu(4, &cpumask);
+	cpumask_clear_cpu(5, &cpumask);
+	cpumask_clear_cpu(6, &cpumask);
+	cpumask_clear_cpu(7, &cpumask);
+
+	kthread_bind_mask(ctlr->kworker_task, &cpumask);
+
+	wake_up_process(ctlr->kworker_task);
 	kthread_init_work(&ctlr->pump_messages, spi_pump_messages);
 
 	/*
@@ -1843,6 +1865,7 @@ of_register_spi_device(struct spi_controller *ctlr, struct device_node *nc)
 	/* Store a pointer to the node in the device structure */
 	of_node_get(nc);
 	spi->dev.of_node = nc;
+	spi->dev.fwnode = of_fwnode_handle(nc);
 
 	/* Register the new device */
 	rc = spi_add_device(spi);

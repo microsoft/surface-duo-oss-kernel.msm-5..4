@@ -1,0 +1,52 @@
+/*
+ * Copyright (c) 2021 Microsoft Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
+ */
+ &soc {
+	dsi_panel_pwr_supply_four_way: dsi_panel_pwr_supply_four_way {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		qcom,panel-supply-entry@0 {
+			reg = <0>;
+			qcom,supply-name = "vdda";
+			qcom,supply-min-voltage = <3072000>;
+			qcom,supply-max-voltage = <3072000>;
+			qcom,supply-enable-load = <10000>;
+			qcom,supply-disable-load = <0>;
+			qcom,supply-post-on-sleep = <0>;
+		};
+		qcom,panel-supply-entry@1 {
+			reg = <1>;
+			qcom,supply-name = "vddio";
+			qcom,supply-min-voltage = <1800000>;
+			qcom,supply-max-voltage = <1800000>;
+			qcom,supply-enable-load = <60700>;
+			qcom,supply-disable-load = <80>;
+			qcom,supply-post-on-sleep = <1>;
+			qcom,supply-pre-off-sleep = <1>;
+		};
+		qcom,panel-supply-entry@2 {
+			reg = <2>;
+			qcom,supply-name = "vdd";
+			qcom,supply-min-voltage = <3000000>;
+			qcom,supply-max-voltage = <3000000>;
+			qcom,supply-enable-load = <10000>;
+			qcom,supply-disable-load = <0>;
+			qcom,supply-post-on-sleep = <0>;
+		};
+        qcom,panel-supply-entry@3 {
+			reg = <3>;
+			qcom,supply-name = "ddic";
+			qcom,supply-min-voltage = <1216000>;
+			qcom,supply-max-voltage = <1216000>;
+			qcom,supply-enable-load = <0>;
+			qcom,supply-disable-load = <0>;
+			qcom,supply-post-on-sleep = <10>;
+			qcom,supply-pre-off-sleep = <10>;
+		};
+	};
+};

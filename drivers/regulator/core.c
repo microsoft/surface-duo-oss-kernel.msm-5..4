@@ -1403,6 +1403,12 @@ static int set_machine_constraints(struct regulator_dev *rdev)
 	 * and we have control then make sure it is enabled.
 	 */
 	if (rdev->constraints->always_on || rdev->constraints->boot_on) {
+		/* If we want to enable this regulator, make sure that we know
+		 * the supplying regulator.
+		 */
+		if (rdev->supply_name && !rdev->supply)
+			return -EPROBE_DEFER;
+
 		if (rdev->supply) {
 			ret = regulator_enable(rdev->supply);
 			if (ret < 0) {
@@ -1598,7 +1604,7 @@ static struct regulator *create_regulator(struct regulator_dev *rdev,
 					  const char *supply_name)
 {
 	struct regulator *regulator;
-	int err;
+	int err = 0;
 
 	if (dev) {
 		char buf[REG_STR_SIZE];
@@ -1644,8 +1650,8 @@ static struct regulator *create_regulator(struct regulator_dev *rdev,
 		}
 	}
 
-	regulator->debugfs = debugfs_create_dir(supply_name,
-						rdev->debugfs);
+	if (err != -EEXIST)
+		regulator->debugfs = debugfs_create_dir(supply_name, rdev->debugfs);
 	if (!regulator->debugfs) {
 		rdev_dbg(rdev, "Failed to create debugfs directory\n");
 	} else {
@@ -1794,13 +1800,13 @@ static int regulator_resolve_supply(struct regulator_dev *rdev)
 {
 	struct regulator_dev *r;
 	struct device *dev = rdev->dev.parent;
-	int ret;
+	int ret = 0;
 
 	/* No supply to resolve? */
 	if (!rdev->supply_name)
 		return 0;
 
-	/* Supply already resolved? */
+	/* Supply already resolved? (fast-path without locking contention) */
 	if (rdev->supply)
 		return 0;
 
@@ -1810,7 +1816,7 @@ static int regulator_resolve_supply(struct regulator_dev *rdev)
 
 		/* Did the lookup explicitly defer for us? */
 		if (ret == -EPROBE_DEFER)
-			return ret;
+			goto out;
 
 		if (have_full_constraints()) {
 			r = dummy_regulator_rdev;
@@ -1818,15 +1824,18 @@ static int regulator_resolve_supply(struct regulator_dev *rdev)
 		} else {
 			dev_err(dev, "Failed to resolve %s-supply for %s\n",
 				rdev->supply_name, rdev->desc->name);
-			return -EPROBE_DEFER;
+			ret = -EPROBE_DEFER;
+			goto out;
 		}
 	}
 
 	if (r == rdev) {
 		dev_err(dev, "Supply for %s (%s) resolved to itself\n",
 			rdev->desc->name, rdev->supply_name);
-		if (!have_full_constraints())
-			return -EINVAL;
+		if (!have_full_constraints()) {
+			ret = -EINVAL;
+			goto out;
+		}
 		r = dummy_regulator_rdev;
 		get_device(&r->dev);
 	}
@@ -1840,7 +1849,8 @@ static int regulator_resolve_supply(struct regulator_dev *rdev)
 	if (r->dev.parent && r->dev.parent != rdev->dev.parent) {
 		if (!device_is_bound(r->dev.parent)) {
 			put_device(&r->dev);
-			return -EPROBE_DEFER;
+			ret = -EPROBE_DEFER;
+			goto out;
 		}
 	}
 
@@ -1848,14 +1858,31 @@ static int regulator_resolve_supply(struct regulator_dev *rdev)
 	ret = regulator_resolve_supply(r);
 	if (ret < 0) {
 		put_device(&r->dev);
-		return ret;
+		goto out;
+	}
+
+	/*
+	 * Recheck rdev->supply with rdev->mutex lock held to avoid a race
+	 * between rdev->supply null check and setting rdev->supply in
+	 * set_supply() from concurrent tasks.
+	 */
+	regulator_lock(rdev);
+
+	/* Supply just resolved by a concurrent task? */
+	if (rdev->supply) {
+		regulator_unlock(rdev);
+		put_device(&r->dev);
+		goto out;
 	}
 
 	ret = set_supply(rdev, r);
 	if (ret < 0) {
+		regulator_unlock(rdev);
 		put_device(&r->dev);
-		return ret;
+		goto out;
 	}
+
+	regulator_unlock(rdev);
 
 	/*
 	 * In set_machine_constraints() we may have turned this regulator on
@@ -1867,11 +1894,12 @@ static int regulator_resolve_supply(struct regulator_dev *rdev)
 		if (ret < 0) {
 			_regulator_put(rdev->supply);
 			rdev->supply = NULL;
-			return ret;
+			goto out;
 		}
 	}
 
-	return 0;
+out:
+	return ret;
 }
 
 /* Internal regulator request function */
@@ -6080,7 +6108,7 @@ static int regulator_summary_show(struct seq_file *s, void *data)
 DEFINE_SHOW_ATTRIBUTE(regulator_summary);
 #endif /* CONFIG_DEBUG_FS */
 
-#ifdef CONFIG_REGULATOR_QTI_DEBUG
+#if defined(CONFIG_REGULATOR_QTI_DEBUG) || defined(CONFIG_REGULATOR_SURFACE_DEBUG)
 static int _regulator_debug_print_enabled(struct device *dev, void *data)
 {
 	struct regulator_dev *rdev = dev_to_rdev(dev);
@@ -6098,33 +6126,39 @@ static int _regulator_debug_print_enabled(struct device *dev, void *data)
 		mode = rdev->desc->ops->get_mode(rdev);
 
 	if (uV != -EPERM && mode != -EPERM)
-		pr_info("%s[%u] %d uV, mode=%d\n",
+		pr_info("## %s[%u] %d uV, mode=%d\n",
 			rdev_get_name(rdev), rdev->use_count, uV, mode);
 	else if (uV != -EPERM)
-		pr_info("%s[%u] %d uV\n",
+		pr_info("## %s[%u] %d uV\n",
 			rdev_get_name(rdev), rdev->use_count, uV);
 	else if (mode != -EPERM)
-		pr_info("%s[%u], mode=%d\n",
+		pr_info("## %s[%u], mode=%d\n",
 			rdev_get_name(rdev), rdev->use_count, mode);
 	else
-		pr_info("%s[%u]\n", rdev_get_name(rdev), rdev->use_count);
+		pr_info("## %s[%u]\n", rdev_get_name(rdev), rdev->use_count);
 
 	/* Print a header if there are consumers. */
+	//MSCHANGE removing header print for every rdev. We will print header only once in function "regulator_debug_print_enabled()".
+	/*
 	if (rdev->open_count)
-		pr_info("  %-32s EN    Min_uV   Max_uV  load_uA\n",
+		pr_info("##  %-32s EN    Min_uV   Max_uV  load_uA\n",
 			"Device-Supply");
-
+	*/
 	list_for_each_entry(reg, &rdev->consumer_list, list) {
-		if (reg->supply_name)
-			supply_name = reg->supply_name;
-		else
-			supply_name = "(null)-(null)";
+		if (reg->enable_count) // MSCHANGE to print only enabled regulator consumer.
+		{
+			if (reg->supply_name)
+				supply_name = reg->supply_name;
+			else
+				supply_name = "(null)-(null)";
 
-		pr_info("  %-32s %d   %8d %8d %8d\n", supply_name,
-			reg->enable_count,
-			reg->voltage[PM_SUSPEND_ON].min_uV,
-			reg->voltage[PM_SUSPEND_ON].max_uV,
-			reg->uA_load);
+			pr_info("##  %-32s %d   %8d %8d %8d\n", supply_name,
+				reg->enable_count,
+				reg->voltage[PM_SUSPEND_ON].min_uV,
+				reg->voltage[PM_SUSPEND_ON].max_uV,
+				reg->uA_load);
+			*(int *)data += 1; // MSCHANGE to increment total Enabled Regulator count by one.
+		}
 	}
 
 	return 0;
@@ -6138,15 +6172,22 @@ static int _regulator_debug_print_enabled(struct device *dev, void *data)
  */
 void regulator_debug_print_enabled(void)
 {
+	int enabled_reg_count = 0;  // MSCHANGE
+	//MSCHANGE to always print regulators enabled during suspend.
+	/*
 	if (likely(!debug_suspend))
 		return;
+	*/
 
 	pr_info("Enabled regulators:\n");
-	class_for_each_device(&regulator_class, NULL, NULL,
+	pr_info("##  %-32s EN    Min_uV   Max_uV  load_uA\n",
+			"Device-Supply"); // MSCHANGE to print header.
+	class_for_each_device(&regulator_class, NULL, &enabled_reg_count,
 			     _regulator_debug_print_enabled);
+	pr_info("Total enabled regulators count: %d", enabled_reg_count); // MSCHANGE to log Enabled Regulators count.
 }
 EXPORT_SYMBOL(regulator_debug_print_enabled);
-#endif /* CONFIG_REGULATOR_QTI_DEBUG */
+#endif /* CONFIG_REGULATOR_QTI_DEBUG  or CONFIG_REGULATOR_SURFACE_DEBUG*/
 
 static int __init regulator_init(void)
 {

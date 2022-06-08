@@ -322,6 +322,8 @@ static const struct hid_device_id hid_battery_quirks[] = {
 	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_LOGITECH,
 		USB_DEVICE_ID_LOGITECH_DINOVO_EDGE_KBD),
 	  HID_BATTERY_QUIRK_IGNORE },
+	{ HID_USB_DEVICE(USB_VENDOR_ID_ELAN, USB_DEVICE_ID_ASUS_UX550_TOUCHSCREEN),
+	  HID_BATTERY_QUIRK_IGNORE },
 	{}
 };
 
@@ -955,6 +957,9 @@ static void hidinput_configure_usage(struct hid_input *hidinput, struct hid_fiel
 
 		case 0x0cd: map_key_clear(KEY_PLAYPAUSE);	break;
 		case 0x0cf: map_key_clear(KEY_VOICECOMMAND);	break;
+
+		case 0x0d9: map_key_clear(KEY_EMOJI_PICKER);	break;
+
 		case 0x0e0: map_abs_clear(ABS_VOLUME);		break;
 		case 0x0e2: map_key_clear(KEY_MUTE);		break;
 		case 0x0e5: map_key_clear(KEY_BASSBOOST);	break;
@@ -1926,7 +1931,13 @@ int hidinput_connect(struct hid_device *hid, unsigned int force)
 		}
 	}
 
-	hidinput_change_resolution_multipliers(hid);
+	// MSFT_START
+	/* High resolution multiplier scrolling is sending a raw request
+	   for feature requests to surface slim pen2 as a result 5s delay
+	   for each request.Using quirks flag to avoid for our pen.*/
+	if (!(hid->quirks & HID_QUIRK_NO_HIGH_RESOLUTION))
+		hidinput_change_resolution_multipliers(hid);
+	// MSFT_END
 
 	list_for_each_entry_safe(hidinput, next, &hid->inputs, list) {
 		if (drv->input_configured &&

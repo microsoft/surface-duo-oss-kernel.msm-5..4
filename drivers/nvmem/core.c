@@ -17,6 +17,7 @@
 #include <linux/nvmem-provider.h>
 #include <linux/of.h>
 #include <linux/slab.h>
+#include <linux/sysfs.h> //MSCHANGE, for eliminating lockdep() warning message
 #include "nvmem.h"
 
 struct nvmem_cell {
@@ -161,6 +162,9 @@ static void nvmem_cell_add(struct nvmem_cell *cell)
 
 #ifdef CONFIG_QCOM_QFPROM_SYSFS
 	/* add attr for this cell */
+	//MSCHANGE Start, for eliminating lockdep() warning message
+	sysfs_bin_attr_init(nvmem_cell_attr);
+	//MSCHANGE End
 	nvmem_cell_attr->attr.name = cell->name;
 	nvmem_cell_attr->attr.mode = 0444;
 	nvmem_cell_attr->private = cell;
@@ -359,17 +363,21 @@ static int nvmem_add_cells_from_of(struct nvmem_device *nvmem)
 
 	for_each_child_of_node(parent, child) {
 		addr = of_get_property(child, "reg", &len);
-		if (!addr || (len < 2 * sizeof(u32))) {
+		if (!addr)
+			continue;
+		if (len < 2 * sizeof(u32)) {
 			dev_err(dev, "nvmem: invalid reg on %pOF\n", child);
+			of_node_put(child);
 			return -EINVAL;
 		}
 
 		cell = kzalloc(sizeof(*cell), GFP_KERNEL);
-		if (!cell)
+		if (!cell) {
+			of_node_put(child);
 			return -ENOMEM;
+		}
 
 		cell->nvmem = nvmem;
-		cell->np = of_node_get(child);
 		cell->offset = be32_to_cpup(addr++);
 		cell->bytes = be32_to_cpup(addr);
 		cell->name = kasprintf(GFP_KERNEL, "%pOFn", child);
@@ -391,9 +399,11 @@ static int nvmem_add_cells_from_of(struct nvmem_device *nvmem)
 			/* Cells already added will be freed later. */
 			kfree_const(cell->name);
 			kfree(cell);
+			of_node_put(child);
 			return -EINVAL;
 		}
 
+		cell->np = of_node_get(child);
 		nvmem_cell_add(cell);
 	}
 

@@ -2865,6 +2865,24 @@ static ssize_t hw_trace_override_store(struct device *dev,
 	return count;
 }
 
+/* MSCHANGE Start */
+static ssize_t bdf_version_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	struct cnss_plat_data *plat_priv = dev_get_drvdata(dev);
+	return sprintf(buf, "%d\n", plat_priv->bdf.version);
+}
+
+static ssize_t bdf_checksum_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	struct cnss_plat_data *plat_priv = dev_get_drvdata(dev);
+	return sprintf(buf, "%d\n", plat_priv->bdf.checksum);
+}
+/* MSCHANGE End */
+
 static DEVICE_ATTR_WO(fs_ready);
 static DEVICE_ATTR_WO(shutdown);
 static DEVICE_ATTR_WO(recovery);
@@ -2873,6 +2891,10 @@ static DEVICE_ATTR_WO(qdss_trace_start);
 static DEVICE_ATTR_WO(qdss_trace_stop);
 static DEVICE_ATTR_WO(qdss_conf_download);
 static DEVICE_ATTR_WO(hw_trace_override);
+/* MSCHANGE Start */
+static DEVICE_ATTR_RO(bdf_version);
+static DEVICE_ATTR_RO(bdf_checksum);
+/* MSCHANGE End */
 
 static struct attribute *cnss_attrs[] = {
 	&dev_attr_fs_ready.attr,
@@ -2883,6 +2905,10 @@ static struct attribute *cnss_attrs[] = {
 	&dev_attr_qdss_trace_stop.attr,
 	&dev_attr_qdss_conf_download.attr,
 	&dev_attr_hw_trace_override.attr,
+	/* MSCHANGE Start */
+	&dev_attr_bdf_version.attr,
+	&dev_attr_bdf_checksum.attr,
+	/* MSCHANGE End */
 	NULL,
 };
 
@@ -3053,6 +3079,10 @@ static void cnss_init_control_params(struct cnss_plat_data *plat_priv)
 	plat_priv->ctrl_params.qmi_timeout = CNSS_QMI_TIMEOUT_DEFAULT;
 	plat_priv->ctrl_params.bdf_type = CNSS_BDF_TYPE_DEFAULT;
 	plat_priv->ctrl_params.time_sync_period = CNSS_TIME_SYNC_PERIOD_DEFAULT;
+	/* Set adsp_pc_enabled default value to true as ADSP pc is always
+	 * enabled by default
+	 */
+	plat_priv->adsp_pc_enabled = true;
 }
 
 static void cnss_get_pm_domain_info(struct cnss_plat_data *plat_priv)
@@ -3203,13 +3233,9 @@ static int cnss_probe(struct platform_device *plat_dev)
 	if (ret)
 		goto deinit_event_work;
 
-	ret = cnss_dms_init(plat_priv);
-	if (ret)
-		goto deinit_qmi;
-
 	ret = cnss_debugfs_create(plat_priv);
 	if (ret)
-		goto deinit_dms;
+		goto deinit_qmi;
 
 	ret = cnss_misc_init(plat_priv);
 	if (ret)
@@ -3237,6 +3263,10 @@ retry:
 		}
 	}
 
+	ret = cnss_dms_init(plat_priv);
+	if (ret)
+		goto deinit_bus;
+
 	cnss_register_coex_service(plat_priv);
 	cnss_register_ims_service(plat_priv);
 
@@ -3248,6 +3278,9 @@ retry:
 
 	return 0;
 
+deinit_bus:
+	if (!test_bit(SKIP_DEVICE_BOOT, &plat_priv->ctrl_params.quirks))
+		cnss_bus_deinit(plat_priv);
 power_off:
 	if (!test_bit(SKIP_DEVICE_BOOT, &plat_priv->ctrl_params.quirks))
 		cnss_power_off_device(plat_priv);
@@ -3255,8 +3288,6 @@ deinit_misc:
 	cnss_misc_deinit(plat_priv);
 destroy_debugfs:
 	cnss_debugfs_destroy(plat_priv);
-deinit_dms:
-	cnss_dms_deinit(plat_priv);
 deinit_qmi:
 	cnss_qmi_deinit(plat_priv);
 deinit_event_work:
@@ -3283,10 +3314,10 @@ static int cnss_remove(struct platform_device *plat_dev)
 	cnss_genl_exit();
 	cnss_unregister_ims_service(plat_priv);
 	cnss_unregister_coex_service(plat_priv);
+	cnss_dms_deinit(plat_priv);
 	cnss_bus_deinit(plat_priv);
 	cnss_misc_deinit(plat_priv);
 	cnss_debugfs_destroy(plat_priv);
-	cnss_dms_deinit(plat_priv);
 	cnss_qmi_deinit(plat_priv);
 	cnss_event_work_deinit(plat_priv);
 	cnss_remove_sysfs(plat_priv);
