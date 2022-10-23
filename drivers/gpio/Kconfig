@@ -47,6 +47,14 @@ config GPIOLIB_IRQCHIP
 	select IRQ_DOMAIN
 	bool
 
+#MSCHANGE start
+config SURFACE_GPIO_DEBUG
+	bool "SURFACE gpio debug feature"
+	depends on QGKI
+	help
+	  Say yes to log enabled clocks during suspend.
+#MSCHANGE end
+
 config DEBUG_GPIO
 	bool "Debug GPIO calls"
 	depends on DEBUG_KERNEL
