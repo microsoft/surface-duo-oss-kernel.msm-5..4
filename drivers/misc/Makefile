@@ -65,3 +65,7 @@ qseecom-mod-$(CONFIG_COMPAT)	+= compat_qseecom.o
 obj-$(CONFIG_PROFILER)			+= profiler.o
 obj-$(CONFIG_WIGIG_SENSING_SPI)	+= wigig_sensing.o
 obj-$(CONFIG_HISI_HIKEY_USB)	+= hisi_hikey_usb.o
+obj-$(CONFIG_FPR_FPC)		+= fpr_FingerprintCard/
+#MSCHANGE start
+obj-$(CONFIG_BOOTING_WATCHDOG)	+= booting_watchdog/
+#MSCHANGE end

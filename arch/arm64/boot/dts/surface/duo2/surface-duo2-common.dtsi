@@ -1,0 +1,235 @@
+/*
+ * Copyright (c) 2020 Microsoft Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
+ */
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+
+#include "../../vendor/qcom/display/lahaina-sde-display-mtp.dtsi"
+#include "../../vendor/qcom/lahaina-thermal-overlay.dtsi"
+#include "../../vendor/qcom/lahaina-pmic-overlay.dtsi"
+#include <dt-bindings/clock/qcom,gcc-lahaina.h>
+
+#include "surface-duo2-touch.dtsi"
+#include "surface-duo2-nfc.dtsi"
+#include "surface-duo2-audio.dtsi"
+#include "surface-duo2-connectivity.dtsi"
+#include "surface-duo2-pmic-overlay.dtsi"
+#include "surface-duo2-camera-sensor.dtsi"
+//#include "surface-duo2-powermonitors.dtsi"
+#include "surface-duo2-surface.dtsi"
+
+&spmi_debug_bus {
+	status = "ok";
+};
+
+&spmi_glink_debug {
+	status = "ok";
+};
+
+&soc {
+	gpio_keys {
+		compatible = "gpio-keys";
+		label = "gpio-keys";
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&key_vol_up_default>;
+
+		vol_up {
+			label = "volume_up";
+			gpios = <&pm8350_gpios 6 GPIO_ACTIVE_LOW>;
+			linux,input-type = <1>;
+			linux,code = <KEY_VOLUMEUP>;
+			gpio-key,wakeup;
+			debounce-interval = <15>;
+			linux,can-disable;
+		};
+	};
+
+/* MSCHANGE start
+    Comment it out as we don't use USB extcon based gpio device in this product
+	extcon_usb1: extcon_usb1 {
+		compatible = "linux,extcon-usb-gpio";
+		vbus-gpio =  <&pm8350_gpios 9 GPIO_ACTIVE_HIGH>;
+		id-gpio = <&tlmm 51 GPIO_ACTIVE_HIGH>;
+		vbus-out-gpio = <&pm8350_gpios 8 GPIO_ACTIVE_HIGH>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb2_vbus_det_default
+			     &usb2_id_det_default
+			     &usb2_vbus_boost_default>;
+	};
+MSCHANGE end*/
+
+    qupv3_se1_2uart: qcom,qup_uart@984000 {
+	compatible = "qcom,msm-geni-serial-hs";
+	reg = <0x984000 0x4000>;
+	reg-names = "se_phys";
+	clock-names = "se-clk", "m-ahb", "s-ahb";
+	clocks = <&clock_gcc GCC_QUPV3_WRAP0_S1_CLK>,
+		<&clock_gcc GCC_QUPV3_WRAP_0_M_AHB_CLK>,
+		<&clock_gcc GCC_QUPV3_WRAP_0_S_AHB_CLK>;
+	pinctrl-names = "default", "active", "sleep";
+	pinctrl-0 = <&qupv3_se1_default_txrx>;
+	pinctrl-1 = <&qupv3_se1_2uart_active>;
+	pinctrl-2 = <&qupv3_se1_2uart_sleep>;
+	interrupts = <GIC_SPI 602 IRQ_TYPE_LEVEL_HIGH>;
+	qcom,wrapper-core = <&qupv3_0>;
+	status = "ok";
+    };
+	ms_gpio_verifier {
+		/*
+		 * IMPORTANT
+		 *
+		 * Use this verifier ONLY if pin addresses follow the given formula:
+		 * pin_addr[i] = base_address_of_region_having_pin[i] + (i * single-gpio-config-size);
+		 *
+		 */
+
+		compatible = "qcom,ms_gpio_verifier";
+
+		/* North, East, South, West */
+		num-gpio-regions = <1>;
+
+		num-gpio-pins = <203>;
+		single-gpio-config-size = <0x01000>;
+
+		/* List of secure GPIOs */
+		secure-gpio {
+			pins = <4 5 6 7 12 14 15 56 57 58 59 76 77 78 79>;
+			xpu-status = <1>;
+			/* 0 : Disabled
+			 * 1 : Enabled
+			 */
+		};
+
+		/* Region names must be of the form regionXYZ */
+
+		/* TLMM North */
+		region0 {
+			base-addr = <0x0f100000>;
+			gpio-ranges = <0 202>;
+		};
+	};
+
+};
+
+&tlmm{
+    qupv3_se1_2uart_pins: qupv3_se1_2uart_pins {
+		qupv3_se1_default_txrx: qupv3_se1_default_txrx {
+			mux {
+				pins = "gpio10", "gpio11";
+				function = "qup1";
+			};
+
+			config {
+				pins = "gpio10", "gpio11";
+				drive-strength = <2>;
+				bias-disable;
+			};
+		};
+
+		qupv3_se1_2uart_active: qupv3_se1_2uart_active {
+			mux {
+				pins = "gpio10", "gpio11";
+				function = "qup1";
+			};
+
+			config {
+				pins = "gpio10", "gpio11";
+				drive-strength = <2>;
+				bias-disable;
+			};
+		};
+
+		qupv3_se1_2uart_sleep: qupv3_se1_2uart_sleep {
+			mux {
+				pins = "gpio10", "gpio11";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio10", "gpio11";
+				drive-strength = <2>;
+				bias-disable;
+			};
+		};
+	};
+};
+
+
+&ufsphy_mem {
+	compatible = "qcom,ufs-phy-qmp-v4-lahaina";
+
+	vdda-phy-supply = <&pm8350_l5>;
+	vdda-phy-always-on;
+	vdda-pll-supply = <&pm8350_l6>;
+	vdda-phy-max-microamp = <91600>;
+	vdda-pll-max-microamp = <19000>;
+
+	status = "ok";
+};
+
+&ufshc_mem {
+	vdd-hba-supply = <&gcc_ufs_phy_gdsc>;
+	vdd-hba-fixed-regulator;
+
+	vcc-supply = <&pm8350_l7>;
+	vcc-voltage-level = <2504000 2950000>;
+	vcc-low-voltage-sup;
+	vcc-max-microamp = <800000>;
+
+	vccq-supply = <&pm8350_l9>;
+	vccq-max-microamp = <900000>;
+
+	qcom,vddp-ref-clk-supply = <&pm8350_l9>;
+	qcom,vddp-ref-clk-max-microamp = <100>;
+
+	status = "ok";
+};
+
+// MSCHANGE start
+
+&pm8350_ms_debug {
+		qcom,regdump-node-name = "main_chg_ic_regdump";
+		qcom,reg-array = <0x2600>, <161>,
+						 <0x2700>, <110>,
+						 <0x2800>, <160>,
+						 <0x2900>, <162>,
+						 <0x2b00>, <119>,
+						 <0x2c00>, <202>;
+		qcom,create-regdump-node;
+};
+
+// MSCHANGE end
+
+/* MSCHANGE start
+    Comment it out as we don't use USB extcon based gpio device in this product
+&usb1 {
+	extcon = <&extcon_usb1>;
+};
+MSCHANGE end */
+
+&battery_charger {
+	#thermal-sensor-cells = <1>;
+	qcom,thermal-mitigation = <2170000 868000 217000>;
+};
+
+/* pcie1 is enabled by default but it is not used in surface-duo2 hence disabled here.
+   pcie1 default config has GPIO pin conflict with tof8801 sensor enable pin. */
+&pcie1 {
+    status = "disabled";
+};
+
+/* disable display_panel_avdd pinctrl because it is only needed for certain sharp panels  */
+&display_panel_avdd {
+    status = "disabled";
+};
+
+#include "surface-duo2-haptics.dtsi"
+#include "surface-duo2-fpc.dtsi"
+#include "surface-duo2-display.dtsi"

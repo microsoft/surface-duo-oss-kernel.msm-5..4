@@ -25,6 +25,7 @@
 #include <linux/nfcinfo.h>
 #include <linux/regulator/consumer.h>
 #include <linux/ipc_logging.h>
+#include <linux/timer.h>
 #include "nfc_i2c_drv.h"
 #include "nfc_i3c_drv.h"
 
@@ -48,6 +49,27 @@
 #define NCI_GET_VERSION_CMD_LEN		(8)
 #define NCI_GET_VERSION_RSP_LEN		(12)
 
+/*
+SEND   :   4 > 20000101 		reset command
+RCEIVE :   4 < 40000100 		reset response
+RCEIVE :  13 < 60000A02012004050FA4011057	reset ntf
+*/
+/*
+SEND   :   5 > 2001020000 		core init command
+RCEIVE :  33 < 40011E001A3E0600010604FFFF01FF000800000100020003008000820083008400	core init response
+SEND   :   3 > 2F0200 			enable proprietary commands
+RCEIVE :   8 < 4F0205000001720D	enable proprietaty response
+SEND   :   4 > 2F000101 		enable standby cmd
+RCEIVE :   4 < 4F000100		enable standby cmd response
+*/
+
+#define NCI_CORE_INIT_CMD_LEN			(5)
+#define NCI_CORE_INIT_RSP_LEN			(33)
+#define NXP_ENABLE_PROPRIETARY_CMD_LEN		(3)
+#define NXP_ENABLE_PROPRIETARY_RSP_LEN		(8)
+#define NXP_ENABLE_STANDBY_CMD_LEN		(4)
+#define NXP_ENABLE_STANDBY_RSP_LEN		(4)
+
 // Below offsets should be subtracted from core reset ntf len
 
 #define NFC_CHIP_TYPE_OFF		(3)
@@ -70,7 +92,7 @@
 #define MAX_BUFFER_SIZE			(558)
 
 // Maximum retry count for standby writes
-#define MAX_RETRY_COUNT			(3)
+#define MAX_RETRY_COUNT			(5)
 
 // Retry count for normal write
 #define NO_RETRY				(1)
@@ -234,12 +256,19 @@ struct nfc_dev {
 	struct platform_ldo ldo;
 	struct cold_reset cold_reset;
 	struct regulator *reg;
+	struct regulator *pmuvcc_1_reg;
+	struct regulator *pmuvcc_2_reg;
+	struct regulator *i2c_data_scl_reg;
 
 	/* read buffer*/
 	size_t kbuflen;
 	u8 *kbuf;
 
 	union nqx_uinfo nqx_info;
+
+	int nfc_i2c_w_error_cnt;
+	int nfc_i2c_r_error_cnt;
+	struct timer_list cn_nfc_timer;
 
 	void *ipcl;
 
@@ -257,8 +286,8 @@ long nfc_dev_ioctl(struct file *pfile, unsigned int cmd, unsigned long arg);
 int nfc_parse_dt(struct device *dev, struct platform_gpio *nfc_gpio,
 		 struct platform_ldo *ldo, uint8_t interface);
 int nfc_misc_probe(struct nfc_dev *nfc_dev,
-		      const struct file_operations *nfc_fops, int count,
-		      char *devname, char *classname);
+			  const struct file_operations *nfc_fops, int count,
+			  char *devname, char *classname);
 void nfc_misc_remove(struct nfc_dev *nfc_dev, int count);
 int configure_gpio(unsigned int gpio, int flag);
 void read_cold_reset_rsp(struct nfc_dev *nfc_dev, char *header);
