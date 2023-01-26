@@ -1,0 +1,5 @@
+config BOOTING_WATCHDOG
+	tristate "Booting watching Driver"
+	default n
+	help
+	  Trigger kernel panic if booting is too long

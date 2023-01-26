@@ -22,6 +22,11 @@ config COMMON_CLK
 
 menu "Common Clock Framework"
 	depends on COMMON_CLK
+config SURFACE_CLK_DEBUG
+	bool "SURFACE clock debug feature"
+	depends on QGKI
+	help
+	  Say yes to log enabled clocks during suspend.
 
 config COMMON_CLK_QCOM_DEBUG
 	bool "QCOM clock debug features"

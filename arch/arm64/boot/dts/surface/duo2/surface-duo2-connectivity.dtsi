@@ -1,0 +1,33 @@
+/*
+ * Copyright (c) 2020 Microsoft Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
+ */
+
+#include <dt-bindings/clock/qcom,rpmh.h>
+
+&wlan {
+        qcom,vdd-wlan-aon-config = <950000 952000 0 0 1>;
+        qcom,vdd-wlan-dig-config = <950000 952000 0 0 1>;
+        qcom,vdd-wlan-io-config = <1800000 1800000 0 0 1>;
+        qcom,vdd-wlan-rfa1-config = <1880000 1880000 0 0 1>;
+        qcom,vdd-wlan-rfa2-config = <1350000 1350000 0 0 1>;
+};
+
+&bluetooth {
+        qcom,bt-vdd-aon-config = <950000 950000 0 1>;
+        qcom,bt-vdd-dig-config = <950000 950000 0 1>;
+        qcom,bt-vdd-rfa1-config = <1880000 1880000 0 1>;
+        qcom,bt-vdd-rfa2-config = <1350000 1350000 0 1>;
+};
+
+
+&qupv3_se13_4uart {
+	status = "ok";
+};
+
+&qupv3_se17_spi {
+        status = "ok";
+};

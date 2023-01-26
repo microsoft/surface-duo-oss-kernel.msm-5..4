@@ -17,6 +17,7 @@
 #include <linux/nvmem-provider.h>
 #include <linux/of.h>
 #include <linux/slab.h>
+#include <linux/sysfs.h> //MSCHANGE, for eliminating lockdep() warning message
 #include "nvmem.h"
 
 struct nvmem_cell {
@@ -161,6 +162,9 @@ static void nvmem_cell_add(struct nvmem_cell *cell)
 
 #ifdef CONFIG_QCOM_QFPROM_SYSFS
 	/* add attr for this cell */
+	//MSCHANGE Start, for eliminating lockdep() warning message
+	sysfs_bin_attr_init(nvmem_cell_attr);
+	//MSCHANGE End
 	nvmem_cell_attr->attr.name = cell->name;
 	nvmem_cell_attr->attr.mode = 0444;
 	nvmem_cell_attr->private = cell;

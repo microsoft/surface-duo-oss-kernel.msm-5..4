@@ -1101,11 +1101,25 @@ export mod_compress_cmd
 ifdef CONFIG_MODULE_SIG_ALL
 $(eval $(call config_filename,MODULE_SIG_KEY))
 
-mod_sign_cmd = scripts/sign-file $(CONFIG_MODULE_SIG_HASH) $(MODULE_SIG_KEY_SRCPREFIX)$(CONFIG_MODULE_SIG_KEY) certs/signing_key.x509
+# MSCHANGE begins
+#Generate a list of modules during module install and then use Autosign to batch sign these modules at once
+  ifeq ($(CONFIG_MODULE_SIG_KEY),"certs/signing_key.pem")
+    mod_sign_cmd = scripts/sign-file $(CONFIG_MODULE_SIG_HASH) $(MODULE_SIG_KEY_SRCPREFIX)$(CONFIG_MODULE_SIG_KEY) certs/signing_key.x509
+    mod_list_file = true
+	batch_sign = false
+  else
+    mod_sign_cmd = $(srctree)/scripts/queue-module-for-batchsign.sh $(mod_list_file)
+    mod_list_file = $(objtree)/scripts/modules_to_sign.txt
+	batch_sign = true
+  endif
 else
-mod_sign_cmd = true
+  mod_sign_cmd = true
+  mod_list_file = true
+  batch_sign = false
 endif
 export mod_sign_cmd
+export mod_list_file
+# MSCHANGE ends
 
 HOST_LIBELF_LIBS = $(shell pkg-config libelf --libs 2>/dev/null || echo -lelf)
 
@@ -1472,12 +1486,23 @@ _modinst_:
 	@cp -f $(objtree)/modules.builtin.modinfo $(MODLIB)/
 	$(Q)$(MAKE) -f $(srctree)/scripts/Makefile.modinst
 
+# MSCHANGE begins
+PHONY += _modbatchsign_
+_modbatchsign_: _modinst_
+ifeq ($(batch_sign), true)
+	@echo "_modbatchsign_: call cmd,batchsign"
+	$(call cmd,batchsign)
+else
+	@echo "_modbatchsign_: No need to call cmd,batchsign"
+endif
+
 # This depmod is only for convenience to give the initial
 # boot a modules.dep even before / is mounted read-write.  However the
 # boot script depmod is the master version.
 PHONY += _modinst_post
-_modinst_post: _modinst_
+_modinst_post: _modbatchsign_
 	$(call cmd,depmod)
+# MSCHANGE ends
 
 ifeq ($(CONFIG_MODULE_SIG), y)
 PHONY += modules_sign
@@ -1766,9 +1791,20 @@ _emodinst_:
 	$(Q)mkdir -p $(MODLIB)/$(install-dir)
 	$(Q)$(MAKE) -f $(srctree)/scripts/Makefile.modinst
 
+# MSCHANGE begins
+PHONY += _emodbatchsign_
+_emodbatchsign_: _emodinst_
+ifeq ($(batch_sign), true)
+	@echo "_emodbatchsign_: call cmd,batchsign"
+	$(call cmd,batchsign)
+else
+	@echo "_emodbatchsign_: No need to call cmd,batchsign"
+endif
+
 PHONY += _emodinst_post
-_emodinst_post: _emodinst_
+_emodinst_post: _emodbatchsign_
 	$(call cmd,depmod)
+# MSCHANGE ends
 
 clean-dirs := $(KBUILD_EXTMOD)
 clean: rm-files := $(KBUILD_EXTMOD)/Module.symvers
@@ -1958,6 +1994,12 @@ quiet_cmd_rmdirs = $(if $(wildcard $(rm-dirs)),CLEAN   $(wildcard $(rm-dirs)))
 
 quiet_cmd_rmfiles = $(if $(wildcard $(rm-files)),CLEAN   $(wildcard $(rm-files)))
       cmd_rmfiles = rm -f $(rm-files)
+
+# MSCHANGE begins
+quiet_cmd_batchsign = Signing modules in parallel
+      cmd_batchsign = $(CONFIG_SHELL) $(KERNEL_BATCH_SIGN_SH) $(mod_list_file) $(KERNELRELEASE) $(srctree)/$(CONFIG_MODULE_SIG_KEY) $(objtree)/scripts/sign-file; \
+	                  rm -f $(mod_list_file)
+# MSCHANGE ends
 
 # Run depmod only if we have System.map and depmod is executable
 quiet_cmd_depmod = DEPMOD  $(KERNELRELEASE)
