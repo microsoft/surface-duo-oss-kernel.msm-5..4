@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2020 Microsoft Corporation
+#
+# This program is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License version 2 as published by
+# the Free Software Foundation.
+#
+
+config SURFACE_FIRMWARE
+        tristate "Firmware drivers for Microsoft Surface"
+        help
+          This option selects drivers included as part of surface customization.
+
+config SURFACE_FIRMWARE_FACTORY
+        tristate "Microsoft Surface Factory firmware modules"
+          default n
+        depends on SURFACE_FIRMWARE
+          select SURFACE_FACTORY_UTIL
+
+config FACTORY_UTIL
+	def_bool y
+  depends on SURFACE_FIRMWARE && SURFACE_FIRMWARE_FACTORY
+
+config SURFACE_LIBRARY
+	tristate "Library for Microsoft Surface"

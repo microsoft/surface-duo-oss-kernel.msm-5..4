@@ -19,6 +19,9 @@
 #include <linux/power_supply.h>
 #include <linux/regmap.h>
 #include <linux/soc/qcom/battery_charger.h>
+/* MSCHANGE start */
+#include <linux/soc/surface/surface_utils.h>
+/* MSCHANGE end */
 
 #include "leds.h"
 
@@ -77,7 +80,13 @@
 #define  FLASH_LED_OTST2_THRSH_MIN		0x30
 
 #define MAX_IRES_LEVELS				2
-#define IRES_12P5_MAX_CURR_MA			1500
+/* MSCHANGE start */
+/* To increase the max current for Dual Led */
+#define IRES_12P5_MAX_CURR_MA			1800
+#define MS_PER_LED_MAX_LIMIT			(IRES_12P5_MAX_CURR_MA / 2)
+#define MS_PER_LED_NORMAL_MAX_LIMIT             (1000 / 2)
+#define SAFETY_TIMER_1000_PLUS_TIMEOUT_MS       (DIV_ROUND_CLOSEST(150, SAFETY_TIMER_STEP_SIZE) - 1)
+/* MSCHANGE end */
 #define IRES_5P0_MAX_CURR_MA			640
 #define TORCH_MAX_CURR_MA			500
 #define IRES_12P5_UA				12500
@@ -90,6 +99,11 @@
 #define VLED_MAX_DEFAULT_UV			3500000
 
 #define LED_MASK_ALL(led)		GENMASK(led->max_channels - 1, 0)
+
+/* MSCHANGE start */
+/* To identify product using product id and use certain properties accordingly */
+uint16_t s_product_id = 0;
+/* MSCHANGE end */
 
 enum flash_led_type {
 	FLASH_LED_TYPE_UNKNOWN,
@@ -202,6 +216,10 @@ struct qti_flash_led {
 struct flash_current_headroom {
 	u16 current_ma;
 	u16 headroom_mv;
+};
+
+struct qti_flash_led_data {
+	u8 max_channels;
 };
 
 static const struct flash_current_headroom pm8350c_map[4] = {
@@ -437,7 +455,20 @@ static int qti_flash_led_enable(struct flash_node_data *fnode)
 	}
 
 	if (fnode->type == FLASH_LED_TYPE_FLASH) {
-		val = fnode->duration | FLASH_LED_SAFETY_TIMER_EN;
+		/* MSCHANGE start */
+		/*
+		 * fnode->duration timeout should be limited to 150ms if the
+		 * current_ma is more than 1000ma.
+		 */
+		u8 duration = fnode->duration;
+		if (fnode->current_ma > MS_PER_LED_NORMAL_MAX_LIMIT &&
+		    duration > SAFETY_TIMER_1000_PLUS_TIMEOUT_MS) {
+			pr_debug("Caping LED max timeout from %u to %u\n",
+				 duration, SAFETY_TIMER_1000_PLUS_TIMEOUT_MS);
+			duration = SAFETY_TIMER_1000_PLUS_TIMEOUT_MS;
+		}
+		val = duration | FLASH_LED_SAFETY_TIMER_EN;
+		/* MSCHANGE end */
 		rc = qti_flash_led_write(led,
 			FLASH_LED_SAFETY_TIMER(addr_offset), &val, 1);
 		if (rc < 0)
@@ -504,6 +535,10 @@ static int __qti_flash_led_brightness_set(struct led_classdev *led_cdev,
 	int rc;
 	u32 current_ma = brightness;
 	u32 min_current_ma;
+	/* MSCHANGE start */
+	u32 max_ires_value;
+	u32 per_led_max_limit;
+	/* MSCHANGE end */
 
 	fdev = container_of(led_cdev, struct led_classdev_flash, led_cdev);
 	fnode = container_of(fdev, struct flash_node_data, fdev);
@@ -533,7 +568,13 @@ static int __qti_flash_led_brightness_set(struct led_classdev *led_cdev,
 	fnode->ires_ua = fnode->default_ires_ua;
 
 	current_ma = min(current_ma, fnode->max_current);
-	if (current_ma > flash_led_max_ires_values[fnode->ires_idx]) {
+
+	/* MSCHANGE start */
+	max_ires_value = flash_led_max_ires_values[fnode->ires_idx];
+	per_led_max_limit = MS_PER_LED_MAX_LIMIT;
+
+	if (current_ma > max_ires_value) {
+	/* MSCHANGE end */
 		if (current_ma > IRES_5P0_MAX_CURR_MA)
 			fnode->ires_ua = IRES_12P5_UA;
 		else
@@ -542,6 +583,20 @@ static int __qti_flash_led_brightness_set(struct led_classdev *led_cdev,
 	}
 
 	fnode->current_ma = current_ma;
+	/*
+	 * MSCHANGE start
+	 * fnode->current_ma for each led channel should never go above
+	 * the limit i.e. MS_PER_LED_MAX_LIMIT
+	 * This check is added to handle cases where flash led current
+	 * set via sysfs node is equal to fnode->max_current for all
+	 * symetric led channels (as sysfs has all 4 channels exposed)
+	 */
+	if (fnode->current_ma > per_led_max_limit) {
+		pr_debug("Caping per LED current from %d to %d\n",
+			fnode->current_ma, per_led_max_limit);
+		fnode->current_ma = per_led_max_limit;
+	}
+	/* MSCHANGE end */
 	led_cdev->brightness = current_ma;
 
 	rc = qti_flash_led_enable(fnode);
@@ -1485,6 +1540,9 @@ static int register_flash_device(struct qti_flash_led *led,
 	const char *temp_string;
 	int rc;
 	u32 val, default_curr_ma, duration;
+	/* MSCHANGE start */
+	enum flash_led_type ires_permissible_max_current;
+	/* MSCHANGE end */
 
 	rc = of_property_read_string(node, "qcom,led-name",
 					&fnode->fdev.led_cdev.name);
@@ -1543,8 +1601,12 @@ static int register_flash_device(struct qti_flash_led *led,
 		return rc;
 	}
 
+	/* MSCHANGE start */
+	ires_permissible_max_current = IRES_12P5_MAX_CURR_MA;
+
 	if (fnode->type == FLASH_LED_TYPE_FLASH &&
-		(val > IRES_12P5_MAX_CURR_MA)) {
+		(val > ires_permissible_max_current)) {
+	/* MSCHANGE end */
 		pr_err("Incorrect max-current-ma for flash %u\n",
 				val);
 		return -EINVAL;
@@ -1772,7 +1834,13 @@ static int qti_flash_led_probe(struct platform_device *pdev)
 {
 	struct device_node *node = pdev->dev.of_node;
 	struct qti_flash_led *led;
+	const struct qti_flash_led_data *data;
 	int rc;
+
+	/* MSCHANGE start */
+	/* Updating according to product id */
+	s_product_id = get_sproduct_id();
+	/* MSCHANGE end */
 
 	led = devm_kzalloc(&pdev->dev, sizeof(*led), GFP_KERNEL);
 	if (!led)
@@ -1784,12 +1852,17 @@ static int qti_flash_led_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
-	led->max_channels = (u8)of_device_get_match_data(&pdev->dev);
-	if (!led->max_channels) {
+
+	data = of_device_get_match_data(&pdev->dev);
+	if (!data)
+		return -ENODEV;
+
+	if (!data->max_channels) {
 		pr_err("Failed to get max supported led channels\n");
 		return -EINVAL;
 	}
 
+	led->max_channels = data->max_channels;
 	led->pdev = pdev;
 	spin_lock_init(&led->lock);
 
@@ -1838,8 +1911,12 @@ static int qti_flash_led_remove(struct platform_device *pdev)
 	return 0;
 }
 
+static const struct qti_flash_led_data qti_flash_led_config = {
+	.max_channels = 4,
+};
+
 const static struct of_device_id qti_flash_led_match_table[] = {
-	{ .compatible = "qcom,pm8350c-flash-led", .data = (void *)4, },
+	{ .compatible = "qcom,pm8350c-flash-led", .data = &qti_flash_led_config, },
 	{ },
 };
 

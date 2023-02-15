@@ -105,6 +105,43 @@ static const char * const adp_hw_platform_subtype[] = {
 	[0] = "ADP",
 };
 
+// MSCHANGE Start
+
+enum {
+  PLATFORM_SUBTYPE_UNKNOWN                = 0x0,
+  PLATFORM_SUBTYPE_EV1                    = 0x1,
+  PLATFORM_SUBTYPE_EV1_1                  = 0x2,
+  PLATFORM_SUBTYPE_EV2                    = 0x3,
+  PLATFORM_SUBTYPE_EV2_1                  = 0x4,
+  PLATFORM_SUBTYPE_EV2_2                  = 0x5,
+  PLATFORM_SUBTYPE_EV2_wifi               = 0x6,
+  PLATFORM_SUBTYPE_SKIP                   = 0x7,
+  PLATFORM_SUBTYPE_EV3_Retail             = 0x8,
+  PLATFORM_SUBTYPE_EV3_Debug              = 0x9,
+  PLATFORM_SUBTYPE_DV_Retail              = 0xA,
+  PLATFORM_SUBTYPE_DV_Debug               = 0xB,
+  PLATFORM_SUBTYPE_MP_Retail              = 0xC,
+  PLATFORM_SUBTYPE_INVALID,
+};
+
+static const char * const hw_platform_subtype[] = {
+  [PLATFORM_SUBTYPE_UNKNOWN]              = "Unknown",
+  [PLATFORM_SUBTYPE_EV1]                  = "EV1",
+  [PLATFORM_SUBTYPE_EV1_1]                = "EV1.1",
+  [PLATFORM_SUBTYPE_EV2]                  = "EV2",
+  [PLATFORM_SUBTYPE_EV2_1]                = "EV2.1",
+  [PLATFORM_SUBTYPE_EV2_2]                = "EV2.2",
+  [PLATFORM_SUBTYPE_EV2_wifi]             = "EV2.2 Wifi",
+  [PLATFORM_SUBTYPE_SKIP]                 = "NOT USED",
+  [PLATFORM_SUBTYPE_EV3_Retail]           = "EV3 Retail",
+  [PLATFORM_SUBTYPE_EV3_Debug]            = "EV3 Debug",
+  [PLATFORM_SUBTYPE_DV_Retail]            = "DV Retail",
+  [PLATFORM_SUBTYPE_DV_Debug]             = "DV Debug",
+  [PLATFORM_SUBTYPE_MP_Retail]            = "MP Retail",
+  [PLATFORM_SUBTYPE_INVALID]              = "Invalid",
+};
+
+/*
 enum {
 	PLATFORM_SUBTYPE_UNKNOWN = 0x0,
 	PLATFORM_SUBTYPE_CHARM = 0x1,
@@ -120,6 +157,9 @@ static const char * const hw_platform_subtype[] = {
 	[PLATFORM_SUBTYPE_STRANGE_2A] = "strange_2a",
 	[PLATFORM_SUBTYPE_INVALID] = "Invalid",
 };
+*/
+
+// MSCHANGE End
 
 /* Socinfo SMEM item structure */
 static struct socinfo {
@@ -1224,6 +1264,14 @@ const char *socinfo_get_id_string(void)
 	return socinfo_machine(id);
 }
 EXPORT_SYMBOL(socinfo_get_id_string);
+
+/*MSCHANGE start*/
+uint32_t socinfo_get_platform_subtype_oem(void)
+{
+	return socinfo_get_platform_subtype();
+}
+EXPORT_SYMBOL(socinfo_get_platform_subtype_oem);
+/*MSCHANGE end*/
 
 static int qcom_socinfo_probe(struct platform_device *pdev)
 {

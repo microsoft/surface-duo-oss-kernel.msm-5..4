@@ -92,6 +92,11 @@
 #include <linux/io.h>
 #include <linux/cache.h>
 #include <linux/rodata_test.h>
+// MSCHANGE start
+#ifdef CONFIG_SURFACE_GPIO_DEBUG
+#include <linux/ms_gpio_verifier.h>
+#endif
+// MSCHANGE end
 #include <linux/jump_label.h>
 #include <linux/mem_encrypt.h>
 
@@ -1119,6 +1124,11 @@ static int __ref kernel_init(void *unused)
 
 	kernel_init_freeable();
 	/* need to finish all async __init code before freeing the memory */
+// MSCHANGE start
+#ifdef CONFIG_SURFACE_GPIO_DEBUG
+	read_all_gpio(MS_GPIO_INIT_STATE);
+#endif
+// MSCHANGE end
 	async_synchronize_full();
 	kprobe_free_init_mem();
 	ftrace_free_init_mem();

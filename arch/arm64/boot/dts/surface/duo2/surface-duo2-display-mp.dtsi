@@ -1,0 +1,122 @@
+/*
+ * Copyright (c) 2020 Microsoft Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
+ */
+ #include "surface-duo2-display-common.dtsi"
+
+&dsi_elgin_dsi0_c3_cmd_mp {
+	qcom,panel-supply-entries = <&dsi_panel_pwr_supply_four_way>;
+	qcom,mdss-dsi-bl-pmic-control-type = "bl_ctrl_dcs";
+	qcom,mdss-dsi-bl-min-level = <1>;
+	qcom,mdss-dsi-bl-max-level = <2047>;
+	qcom,mdss-brightness-max-level = <255>;
+	qcom,platform-te-gpio = <&tlmm 82 0>;
+	qcom,platform-reset-gpio = <&tlmm 50 0>;
+	qcom,mdss-dsi-panel-hdr-enabled;
+	qcom,mdss-dsi-panel-hdr-color-primaries = <15635 16450 34255 15700 11710 36280 6600 2960>;
+	qcom,mdss-dsi-panel-peak-brightness = <8000000>;
+	qcom,mdss-dsi-panel-blackness-level = <6000>;
+};
+
+&dsi_elgin_dsi1_r2_cmd_mp {
+	qcom,panel-sec-supply-entries = <&dsi_panel_pwr_supply_four_way>;
+	qcom,mdss-dsi-sec-bl-pmic-control-type = "bl_ctrl_dcs";
+	qcom,mdss-dsi-bl-min-level = <1>;
+	qcom,mdss-dsi-bl-max-level = <2047>;
+	qcom,mdss-brightness-max-level = <255>;
+	qcom,platform-te-gpio = <&tlmm 83 0>;
+	qcom,platform-sec-reset-gpio = <&tlmm 51 0>;
+	qcom,mdss-dsi-panel-hdr-enabled;
+	qcom,mdss-dsi-panel-hdr-color-primaries = <15635 16450 34255 15700 11710 36280 6600 2960>;
+	qcom,mdss-dsi-panel-peak-brightness = <8000000>;
+	qcom,mdss-dsi-panel-blackness-level = <6000>;
+};
+
+&dsi_elgin_dsi_sync_cmd_mp {
+	qcom,panel-supply-entries = <&dsi_panel_pwr_supply_four_way>;
+	qcom,panel-sec-supply-entries = <&dsi_panel_pwr_supply_four_way>;
+	qcom,mdss-dsi-bl-pmic-control-type = "bl_ctrl_dcs";
+	qcom,mdss-dsi-sec-bl-pmic-control-type = "bl_ctrl_dcs";
+	qcom,mdss-dsi-bl-min-level = <1>;
+	qcom,mdss-dsi-bl-max-level = <2047>;
+	qcom,mdss-brightness-max-level = <255>;
+	qcom,platform-reset-gpio = <&tlmm 50 0>;
+	qcom,platform-sec-reset-gpio = <&tlmm 51 0>;
+	qcom,mdss-dsi-panel-hdr-enabled;
+	qcom,mdss-dsi-panel-hdr-color-primaries = <15635 16450 34255 15700 11710 36280 6600 2960>;
+	qcom,mdss-dsi-panel-peak-brightness = <8000000>;
+	qcom,mdss-dsi-panel-blackness-level = <6000>;
+};
+
+&sde_dsi {
+	qcom,dsi-default-panel = <&dsi_elgin_dsi_sync_cmd_mp>;
+	vdda-supply = <&L2B>;
+	vddio-supply = <&L12C>;
+	vdd-supply = <&L13C>;
+	ddic-supply = <&L1D>;
+};
+
+&sde_dsi1 {
+	qcom,dsi-default-panel = <&dsi_elgin_dsi_sync_cmd_mp>;
+	vdda-supply = <&L2B>;
+	vddio-supply = <&L12C>;
+	vdd-supply = <&L13C>;
+	ddic-supply = <&L1D>;
+};
+
+&mdss_dsi0 {
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@1 {
+			reg = <1>;
+			mdss_dsi0_out: endpoint {
+				remote-endpoint = <&elgin_in_0_mp>;
+			};
+		};
+	};
+};
+
+&mdss_dsi1 {
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@1 {
+			reg = <1>;
+			mdss_dsi1_out: endpoint {
+				remote-endpoint = <&elgin_in_1_mp>;
+			};
+		};
+	};
+};
+
+&dsi_elgin_dsi_sync_cmd_mp {
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@0 {
+			reg = <0>;
+			elgin_in_0_mp: endpoint {
+				remote-endpoint = <&mdss_dsi0_out>;
+			};
+		};
+
+		port@1 {
+			reg = <1>;
+			elgin_in_1_mp: endpoint {
+				remote-endpoint = <&mdss_dsi1_out>;
+			};
+		};
+	};
+};
+
+
+&qupv3_se8_i2c {
+    status = "ok";
+};
