@@ -25,6 +25,10 @@
 #define REGDB_FILE_NAME			"regdb.bin"
 #define HDS_FILE_NAME			"hds.bin"
 #define CHIP_ID_GF_MASK			0x10
+/* MSCHANGE Start */
+#define BDF_VERSION_OFFSET		1050
+#define BDF_CHECKSUM_OFFSET		1034
+/* MSCHANGE End */
 
 #define QDSS_TRACE_CONFIG_FILE		"qdss_trace_config"
 #define DEBUG_STR			"debug"
@@ -638,6 +642,16 @@ int cnss_wlfw_bdf_dnld_send_sync(struct cnss_plat_data *plat_priv,
 	remaining = (u32)fw_entry->size;
 
 	cnss_pr_dbg("Downloading BDF: %s, size: %u\n", filename, remaining);
+
+	/* MSCHANGE Start */
+	if (bdf_type == CNSS_BDF_ELF && remaining > BDF_VERSION_OFFSET) {
+		plat_priv->bdf.version = *(temp + BDF_VERSION_OFFSET);
+		plat_priv->bdf.checksum =
+			*(temp + BDF_CHECKSUM_OFFSET + 1) << 8 | *(temp + BDF_CHECKSUM_OFFSET);
+		cnss_pr_dbg("BDF version: %d, checksum: %d\n",
+			plat_priv->bdf.version, plat_priv->bdf.checksum);
+	}
+	/* MSCHANGE End */
 
 	while (remaining) {
 		req->valid = 1;

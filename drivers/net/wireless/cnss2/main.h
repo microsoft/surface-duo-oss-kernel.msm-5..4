@@ -412,6 +412,13 @@ enum cnss_timeout_type {
 	CNSS_TIMEOUT_RECOVERY,
 };
 
+/* MSCHANGE Start */
+struct cnss_bdf_info {
+	u32 version;
+	u32 checksum;
+};
+/* MSCHANGE End */
+
 struct cnss_plat_data {
 	struct platform_device *plat_dev;
 	void *bus_priv;
@@ -506,6 +513,7 @@ struct cnss_plat_data {
 	struct device_node *dev_node;
 	u64 feature_list;
 	bool adsp_pc_enabled;
+	struct cnss_bdf_info bdf; // MSCHANGE
 };
 
 #ifdef CONFIG_ARCH_QCOM

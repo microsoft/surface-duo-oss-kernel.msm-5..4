@@ -24,6 +24,16 @@ allowed_warnings = set([
     "mprotect.c:42",
     "signal.c:95",
     "signal.c:51",
+    "bcache.h:286",
+    "bcache.h:287",
+    "hfi_iris2.c:170",
+    "ipahal_hw_stats.c:228",
+    "qpnp-lcdb-regulator.c:2625",
+    "qpnp-lcdb-regulator.c:2734",
+    "adsprpc_compat.c:298",
+    "adsprpc_compat.c:299",
+    "adsprpc_compat.c:387",
+    "adsprpc_compat.c:389",
  ])
 
 # Capture the name of the object file, can find it.

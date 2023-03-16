@@ -1,0 +1,136 @@
+/*
+ * Copyright (c) 2020 Microsoft Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
+ */
+
+
+&qupv3_se5_i2c { // Power Monitors R2
+	status = "ok";
+
+	max0: max34417@10 {
+		compatible = "maxim,max34417";
+		reg = <0x10>;
+		max_label = "max0";
+		vdd-supply = <&pm8350_l2>; //VDD_L2
+		vio-supply = <&pm8350_s10>; //VDD18_IO
+		channels {
+			max0_ch0: channel@0 {
+				label = "VPH_PWR";
+				sense-resistor-milliohm = <10>;
+				reg = <0>;
+			};
+			max0_ch1: channel@1 {
+				label = "VBUS";
+				sense-resistor-milliohm = <10>;
+				reg = <1>;
+			};
+			max0_ch2: channel@2 {
+				label = "N/A"; // Not using this channel to read any data.
+				sense-resistor-milliohm = <100>;
+				reg = <2>;
+			};
+			max0_ch3: channel@3 {
+				label = "SOC_APC0";
+				sense-resistor-milliohm = <10>;
+				reg = <3>;
+			};
+		};
+	};
+
+	max1: max34417@12 {
+		compatible = "maxim,max34417";
+		reg = <0x12>;
+		max_label = "max1";
+		vdd-supply = <&pm8350_l2>; //VDD_L2
+		vio-supply = <&pm8350_s10>; //VDD18_IO
+
+		channels {
+			max1_ch0: channel@0 {
+				label = "SOC_Graphics";
+				sense-resistor-milliohm = <10>;
+				reg = <0>;
+			};
+			max1_ch1: channel@1 {
+				label = "DDR_HV";
+				sense-resistor-milliohm = <10>;
+				reg = <1>;
+			};
+			max1_ch2: channel@2 {
+				label = "SOC_MM";
+				sense-resistor-milliohm = <10>;
+				reg = <2>;
+			};
+			max1_ch3: channel@3 {
+				label = "SOC_MX";
+				sense-resistor-milliohm = <10>;
+				reg = <3>;
+			};
+		};
+	};
+
+	max3: max34417@16 {
+		compatible = "maxim,max34417";
+		reg = <0x16>;
+		max_label = "max3";
+		vdd-supply = <&pm8350_l2>; //VDD_L2
+		vio-supply = <&pm8350_s10>; //VDD18_IO
+
+
+		channels {
+			max3_ch0: channel@0 {
+				label = "DDR_LV";
+				sense-resistor-milliohm = <100>;
+				reg = <0>;
+			};
+			max3_ch1: channel@1 {
+				label = "DDR_VDD1";
+				sense-resistor-milliohm = <100>;
+				reg = <1>;
+			};
+			max3_ch2: channel@2 {
+				label = "SOC_CX";
+				sense-resistor-milliohm = <10>;
+				reg = <2>;
+			};
+			max3_ch3: channel@3 {
+				label = "SOC_APC1";
+				sense-resistor-milliohm = <10>;
+				reg = <3>;
+			};
+		};
+	};
+
+        max5: max34417@1A {
+		compatible = "maxim,max34417";
+		reg = <0x1A>;
+		max_label = "max5";
+		vdd-supply = <&pm8350_l2>; //VDD_L2
+		vio-supply = <&pm8350_s10>; //VDD18_IO
+
+		channels {
+			max5_ch0: channel@0 {
+				label = "DISPLAY";
+				sense-resistor-milliohm = <25>;
+				reg = <0>;
+			};
+			max5_ch1: channel@1 {
+				label = "Touch_Sens1P8";
+				sense-resistor-milliohm = <10>;
+				reg = <1>;
+			};
+			max5_ch2: channel@2 {
+				label = "Touch_Sens5V";
+				sense-resistor-milliohm = <10>;
+				reg = <2>;
+			};
+			max5_ch3: channel@3 {
+				label = "C3Spkr_R2RcvrAmp";
+				sense-resistor-milliohm = <10>;
+				reg = <3>;
+			};
+		};
+	};
+};

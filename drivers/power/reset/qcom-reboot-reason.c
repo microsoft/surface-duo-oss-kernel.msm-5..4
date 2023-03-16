@@ -17,6 +17,7 @@
 struct qcom_reboot_reason {
 	struct device *dev;
 	struct notifier_block reboot_nb;
+	struct notifier_block panic_nb;
 	struct nvmem_cell *nvmem_cell;
 };
 
@@ -32,6 +33,13 @@ static struct poweroff_reason reasons[] = {
 	{ "dm-verity device corrupted",	0x04 },
 	{ "dm-verity enforcing",	0x05 },
 	{ "keys clear",			0x06 },
+	// MSCHANGE adding custom reset reasons
+	{ "shipmode", 0x21},
+	{ "rnrmode", 0x22},
+	{ "kernel-panic", 0x23},
+	{ "oem-rsocimbalance", 0x24},
+	{ "oem-fgfault-ovp", 0x25},
+	{ "oem-fgfault-ot", 0x26},
 	{}
 };
 
@@ -57,6 +65,25 @@ static int qcom_reboot_reason_reboot(struct notifier_block *this,
 	return NOTIFY_OK;
 }
 
+static int qcom_reboot_reason_panic(struct notifier_block *this,
+                                     unsigned long event, void *ptr)
+{
+        struct qcom_reboot_reason *reboot = container_of(this,
+                struct qcom_reboot_reason, panic_nb);
+        struct poweroff_reason *reason;
+
+        for (reason = reasons; reason->cmd; reason++) {
+                if (!strcmp("kernel-panic", reason->cmd)) {
+                        nvmem_cell_write(reboot->nvmem_cell,
+                                         &reason->pon_reason,
+                                         sizeof(reason->pon_reason));
+                        break;
+                }
+        }
+
+        return NOTIFY_OK;
+}
+
 static int qcom_reboot_reason_probe(struct platform_device *pdev)
 {
 	struct qcom_reboot_reason *reboot;
@@ -75,6 +102,11 @@ static int qcom_reboot_reason_probe(struct platform_device *pdev)
 	reboot->reboot_nb.notifier_call = qcom_reboot_reason_reboot;
 	reboot->reboot_nb.priority = 255;
 	register_reboot_notifier(&reboot->reboot_nb);
+
+	reboot->panic_nb.notifier_call = qcom_reboot_reason_panic;
+	reboot->panic_nb.priority = 200;
+	atomic_notifier_chain_register(&panic_notifier_list,
+			&reboot->panic_nb);
 
 	platform_set_drvdata(pdev, reboot);
 

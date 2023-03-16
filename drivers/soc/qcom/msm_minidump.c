@@ -16,6 +16,7 @@
 #include <linux/soc/qcom/smem.h>
 #include <soc/qcom/minidump.h>
 #include "minidump_private.h"
+#include <linux/module.h>
 
 #define MAX_NUM_ENTRIES         (CONFIG_MINIDUMP_MAX_ENTRIES + 1)
 #define MAX_STRTBL_SIZE		(MAX_NUM_ENTRIES * MAX_REGION_NAME_LENGTH)

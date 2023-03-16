@@ -1461,16 +1461,32 @@ static void spi_set_thread_rt(struct spi_controller *ctlr)
 
 static int spi_init_queue(struct spi_controller *ctlr)
 {
+	cpumask_t cpumask;
+
 	ctlr->running = false;
 	ctlr->busy = false;
 
 	kthread_init_worker(&ctlr->kworker);
-	ctlr->kworker_task = kthread_run(kthread_worker_fn, &ctlr->kworker,
+	ctlr->kworker_task = kthread_create(kthread_worker_fn, &ctlr->kworker,
 					 "%s", dev_name(&ctlr->dev));
 	if (IS_ERR(ctlr->kworker_task)) {
 		dev_err(&ctlr->dev, "failed to create message pump task\n");
 		return PTR_ERR(ctlr->kworker_task);
 	}
+
+	cpumask_set_cpu(0, &cpumask);
+	cpumask_set_cpu(1, &cpumask);
+	cpumask_set_cpu(2, &cpumask);
+	cpumask_set_cpu(3, &cpumask);
+
+	cpumask_clear_cpu(4, &cpumask);
+	cpumask_clear_cpu(5, &cpumask);
+	cpumask_clear_cpu(6, &cpumask);
+	cpumask_clear_cpu(7, &cpumask);
+
+	kthread_bind_mask(ctlr->kworker_task, &cpumask);
+
+	wake_up_process(ctlr->kworker_task);
 	kthread_init_work(&ctlr->pump_messages, spi_pump_messages);
 
 	/*
