@@ -204,6 +204,28 @@ res="${res}${CONFIG_LOCALVERSION}${LOCALVERSION}"
 if test "$CONFIG_LOCALVERSION_AUTO" = "y"; then
 	# full scm version string
 	res="$res$(scm_version)"
+
+	# MSCHANGE Use custom version
+	if test -z "${AZBUILDVER}"; then
+		AZBUILDVER="0.0.0"
+	fi
+	AZBUILDVER=$(echo ${AZBUILDVER} | tr '\.' '_')
+
+	if [ "${KERNEL_DEFCONFIG}" = "lahaina-qgki-debug_defconfig" ]
+	then
+		res="${CONFIG_LOCALVERSION}-c1-d-${AZBUILDVER}"
+	# MSCHANGE, added lahaina-qgki_ps_defconfig
+	elif [ "${KERNEL_DEFCONFIG}" = "lahaina-qgki_defconfig" ] || [ "${KERNEL_DEFCONFIG}" = "lahaina-qgki_ps_defconfig" ]
+	then
+		res="${CONFIG_LOCALVERSION}-c1-p-${AZBUILDVER}"
+	elif [ "${KERNEL_DEFCONFIG}" = "lahaina-gki_defconfig" ]
+	then
+		res="${CONFIG_LOCALVERSION}-c1-g-${AZBUILDVER}"
+	else
+		#Make sure this is > 64 chars to fail the build
+		res="UNKNOWN KERNEL CONFIG ${KERNEL_DEFCONFIG} - ERROR ----------------------------------------------------------------"
+	fi
+	# MSCHANGE End
 else
 	# append a plus sign if the repository is not in a clean
 	# annotated or signed tagged state (as git describe only

@@ -149,6 +149,7 @@ config HID_APPLEIR
 
 config HID_ASUS
 	tristate "Asus"
+	depends on USB_HID
 	depends on LEDS_CLASS
 	depends on ASUS_WMI || ASUS_WMI=n
 	select POWER_SUPPLY
@@ -1206,6 +1207,8 @@ endif # HID
 source "drivers/hid/usbhid/Kconfig"
 
 source "drivers/hid/i2c-hid/Kconfig"
+
+source "drivers/hid/spi-hid/Kconfig"
 
 source "drivers/hid/intel-ish-hid/Kconfig"
 

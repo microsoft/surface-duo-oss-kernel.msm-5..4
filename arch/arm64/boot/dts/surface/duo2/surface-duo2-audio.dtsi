@@ -1,0 +1,247 @@
+/*
+ * Copyright (c) 2020 Microsoft Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
+ */
+
+#include "../../vendor/qcom/lahaina-audio-overlay.dtsi"
+
+&swr_dmic_01 {
+        status = "disabled";
+};
+
+&swr_dmic_02 {
+        status = "disabled";
+};
+
+&swr_dmic_03 {
+        status = "disabled";
+};
+
+&swr_dmic_04 {
+        status = "disabled";
+};
+
+&wcd938x_codec {
+        status = "disabled";
+};
+
+&va_macro {
+       va-vdd-micb-supply = <&L2C>;
+};
+
+&lahaina_snd {
+        qcom,model = "lahaina-qrd-snd-card";
+        qcom,wcd-disabled = <1>;
+
+        qcom,audio-routing =
+                "HAP_IN", "PCM_OUT",
+                "WSA SRC0_INP", "SRC0",
+                "WSA_TX DEC0_INP", "TX DEC0 MUX",
+                "WSA_TX DEC1_INP", "TX DEC1 MUX",
+                "RX_TX DEC0_INP", "TX DEC0 MUX",
+                "RX_TX DEC1_INP", "TX DEC1 MUX",
+                "RX_TX DEC2_INP", "TX DEC2 MUX",
+                "RX_TX DEC3_INP", "TX DEC3 MUX",
+                "SpkrLeft IN", "WSA_SPK1 OUT",
+                "SpkrRight IN", "WSA_SPK2 OUT",
+                "Receiver IN", "WSA_SPK1 OUT",
+                "VA SWR_INPUT", "VA_SWR_CLK",
+                "VA_AIF1 CAP", "VA_SWR_CLK",
+                "VA_AIF2 CAP", "VA_SWR_CLK",
+                "VA_AIF3 CAP", "VA_SWR_CLK",
+                "Digital Mic0", "VA MIC BIAS1",
+                "Digital Mic1", "VA MIC BIAS1",
+                "Digital Mic2", "VA MIC BIAS1",
+                "Digital Mic3", "VA MIC BIAS1",
+                "Digital Mic4", "VA MIC BIAS1",
+                "Digital Mic5", "VA MIC BIAS1",
+
+                "VA DMIC0", "Digital Mic0",
+                "VA DMIC1", "Digital Mic1",
+                "VA DMIC2", "Digital Mic2",
+                "VA DMIC3", "Digital Mic3",
+                "VA DMIC4", "Digital Mic4",
+                "VA DMIC5", "Digital Mic5",
+                "VA DMIC0", "VA MIC BIAS1",
+                "VA DMIC1", "VA MIC BIAS1",
+                "VA DMIC2", "VA MIC BIAS1",
+                "VA DMIC3", "VA MIC BIAS1",
+                "VA DMIC4", "VA MIC BIAS1",
+                "VA DMIC5", "VA MIC BIAS1",
+
+                "TX DMIC0", "Digital Mic0",
+                "TX DMIC0", "VA MIC BIAS1",
+                "TX DMIC1", "Digital Mic1",
+                "TX DMIC1", "VA MIC BIAS1",
+                "TX DMIC2", "Digital Mic2",
+                "TX DMIC2", "VA MIC BIAS1",
+                "TX DMIC3", "Digital Mic3",
+                "TX DMIC3", "VA MIC BIAS1",
+                "TX DMIC4", "Digital Mic4",
+                "TX DMIC4", "VA MIC BIAS1",
+                "TX DMIC5", "Digital Mic5",
+                "TX DMIC5", "VA MIC BIAS1";
+
+        qcom,swr-dmic-max-devs = <0>;
+
+        qcom,cdc-dmic01-gpios = <&cdc_dmic01_gpios>;
+        qcom,cdc-dmic23-gpios = <&cdc_dmic23_gpios>;
+        qcom,cdc-dmic45-gpios = <&cdc_dmic45_gpios>;
+
+        qcom,msm-mbhc-usbc-audio-supported = <1>;
+        qcom,msm-mbhc-hphl-swh = <0>;
+        qcom,msm-mbhc-gnd-swh = <0>;
+
+        asoc-codec  = <&stub_codec>, <&bolero>,
+                      <&swr_haptics>,
+                      <&wsa883x_0221>, <&wsa883x_0222>,
+                      <&swr_dmic_01>, <&swr_dmic_02>,
+                      <&swr_dmic_03>, <&swr_dmic_04>,
+                      <&ext_disp_audio_codec>,
+                      <&wsa883x_0223>;
+        asoc-codec-names =
+                      "msm-stub-codec.1", "bolero_codec",
+                      "swr-haptics",
+                      "wsa-codec1", "wsa-codec2",
+                      "swr-dmic.01", "swr-dmic.02",
+                      "swr-dmic.03", "swr-dmic.04",
+                      "msm-ext-disp-audio-codec-rx",
+                      "wsa-codec3";
+
+        qcom,wsa-max-devs = <3>;
+};
+
+&tlmm {
+        /* WSA speaker 1 enable pins */
+        spkr_1_en_n {
+                spkr_1_en_n_sleep: spkr_1_en_n_sleep {
+                        mux {
+                                pins = "gpio128";
+                                function = "gpio";
+                        };
+
+                        config {
+                                pins = "gpio128";
+                                drive-strength = <2>;   /* 2 mA */
+                                bias-pull-down;
+                                input-enable;
+                        };
+                };
+                spkr_1_en_n_active: spkr_1_en_n_active {
+                        mux {
+                                pins = "gpio128";
+                                function = "gpio";
+                        };
+
+                        config {
+                                pins = "gpio128";
+                                drive-strength = <16>;   /* 16 mA */
+                                bias-disable;
+                                output-high;
+                        };
+                };
+        };
+
+        /* WSA speaker 2 enable pins */
+        spkr_2_en_n {
+                spkr_2_en_n_sleep: spkr_1_en_n_sleep {
+                        mux {
+                                pins = "gpio42";
+                                function = "gpio";
+                        };
+
+                        config {
+                                pins = "gpio42";
+                                drive-strength = <2>;   /* 2 mA */
+                                bias-pull-down;
+                                input-enable;
+                        };
+                };
+                spkr_2_en_n_active: spkr_1_en_n_active {
+                        mux {
+                                pins = "gpio42";
+                                function = "gpio";
+                        };
+
+                        config {
+                                pins = "gpio42";
+                                drive-strength = <16>;   /* 16 mA */
+                                bias-disable;
+                                output-high;
+                        };
+                };
+        };
+
+        /* WSA speaker 3 enable pins */
+        spkr_3_en_n {
+                spkr_3_en_n_sleep: spkr_1_en_n_sleep {
+                        mux {
+                                pins = "gpio131";
+                                function = "gpio";
+                        };
+
+                        config {
+                                pins = "gpio131";
+                                drive-strength = <2>;   /* 2 mA */
+                                bias-pull-down;
+                                input-enable;
+                        };
+                };
+                spkr_3_en_n_active: spkr_1_en_n_active {
+                        mux {
+                                pins = "gpio131";
+                                function = "gpio";
+                        };
+
+                        config {
+                                pins = "gpio131";
+                                drive-strength = <16>;   /* 16 mA */
+                                bias-disable;
+                                output-high;
+                        };
+                };
+        };
+};
+
+&wsa_spkr_en1 {
+        compatible = "qcom,msm-cdc-pinctrl";
+        pinctrl-names = "aud_active", "aud_sleep";
+        pinctrl-0 = <&spkr_1_en_n_active>;
+        pinctrl-1 = <&spkr_1_en_n_sleep>;
+};
+
+&wsa_spkr_en2 {
+        compatible = "qcom,msm-cdc-pinctrl";
+        pinctrl-names = "aud_active", "aud_sleep";
+        pinctrl-0 = <&spkr_2_en_n_active>;
+        pinctrl-1 = <&spkr_2_en_n_sleep>;
+};
+
+&soc {
+        wsa_spkr_en3: wsa_spkr_en3_pinctrl {
+                compatible = "qcom,msm-cdc-pinctrl";
+                pinctrl-names = "aud_active", "aud_sleep";
+                pinctrl-0 = <&spkr_3_en_n_active>;
+                pinctrl-1 = <&spkr_3_en_n_sleep>;
+        };
+};
+
+&swr0 {
+        qcom,swr-num-dev = <3>;
+
+        wsa883x_0223: wsa883x@02170223 {
+                compatible = "qcom,wsa883x";
+                reg = <0x2 0x2170223>;
+                qcom,spkr-sd-n-node = <&wsa_spkr_en3>;
+                qcom,bolero-handle = <&bolero>;
+
+                cdc-vdd-1p8-supply = <&S10B>;
+                qcom,cdc-vdd-1p8-voltage = <1800000 1800000>;
+                qcom,cdc-vdd-1p8-current = <20000>;
+                qcom,cdc-static-supplies = "cdc-vdd-1p8";
+                qcom,wsa-prefix = "Receiver";
+        };
+};

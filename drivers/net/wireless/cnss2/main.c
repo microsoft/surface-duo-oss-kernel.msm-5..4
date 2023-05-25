@@ -2865,6 +2865,24 @@ static ssize_t hw_trace_override_store(struct device *dev,
 	return count;
 }
 
+/* MSCHANGE Start */
+static ssize_t bdf_version_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	struct cnss_plat_data *plat_priv = dev_get_drvdata(dev);
+	return sprintf(buf, "%d\n", plat_priv->bdf.version);
+}
+
+static ssize_t bdf_checksum_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	struct cnss_plat_data *plat_priv = dev_get_drvdata(dev);
+	return sprintf(buf, "%d\n", plat_priv->bdf.checksum);
+}
+/* MSCHANGE End */
+
 static DEVICE_ATTR_WO(fs_ready);
 static DEVICE_ATTR_WO(shutdown);
 static DEVICE_ATTR_WO(recovery);
@@ -2873,6 +2891,10 @@ static DEVICE_ATTR_WO(qdss_trace_start);
 static DEVICE_ATTR_WO(qdss_trace_stop);
 static DEVICE_ATTR_WO(qdss_conf_download);
 static DEVICE_ATTR_WO(hw_trace_override);
+/* MSCHANGE Start */
+static DEVICE_ATTR_RO(bdf_version);
+static DEVICE_ATTR_RO(bdf_checksum);
+/* MSCHANGE End */
 
 static struct attribute *cnss_attrs[] = {
 	&dev_attr_fs_ready.attr,
@@ -2883,6 +2905,10 @@ static struct attribute *cnss_attrs[] = {
 	&dev_attr_qdss_trace_stop.attr,
 	&dev_attr_qdss_conf_download.attr,
 	&dev_attr_hw_trace_override.attr,
+	/* MSCHANGE Start */
+	&dev_attr_bdf_version.attr,
+	&dev_attr_bdf_checksum.attr,
+	/* MSCHANGE End */
 	NULL,
 };
 

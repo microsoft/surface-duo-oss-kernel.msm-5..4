@@ -1310,6 +1310,7 @@
   kfree
   kfree_skb
   kfree_skb_list
+  kill_anon_super
   kill_fasync
   kill_litter_super
   kimage_vaddr
@@ -1942,6 +1943,7 @@
   refcount_dec_not_one
   refcount_inc_checked
   refcount_inc_not_zero_checked
+  refcount_warn_saturate
   __refrigerator
   regcache_cache_bypass
   regcache_cache_only
@@ -2364,6 +2366,7 @@
   spi_register_controller
   __spi_register_driver
   spi_setup
+  spi_async
   spi_sync
   spi_unregister_controller
   __splice_from_pipe
@@ -2869,6 +2872,7 @@
   vmalloc_to_page
   vmalloc_user
   vmap
+  vmemdup_user
   vmemmap
   vmf_insert_mixed
   vmf_insert_pfn
