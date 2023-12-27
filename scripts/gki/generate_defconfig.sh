@@ -62,6 +62,13 @@ case "$REQUIRED_DEFCONFIG" in
 	${PLATFORM_NAME}-qgki-consolidate_defconfig )
 		FINAL_DEFCONFIG_BLEND+=" $QCOM_CONSOLIDATE_FRAG"
 		;&	# Intentional fallthrough
+# MSCHANGE start
+	${PLATFORM_NAME}-qgki_ps_defconfig )
+		if [ "$REQUIRED_DEFCONFIG" == "${PLATFORM_NAME}-qgki_ps_defconfig" ]; then
+			FINAL_DEFCONFIG_BLEND+=" $SURFACE_PRODUCT_KEY_FRAG"
+		fi
+		;&	# Intentional fallthrough
+# MSCHANGE end
 	${PLATFORM_NAME}-qgki_defconfig )
 		# DEBUG_FS fragment.
 		FINAL_DEFCONFIG_BLEND+=" $QCOM_DEBUG_FS_FRAG"

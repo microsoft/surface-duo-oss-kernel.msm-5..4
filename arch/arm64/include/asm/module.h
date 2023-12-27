@@ -21,7 +21,11 @@ struct mod_arch_specific {
 	struct mod_plt_sec	init;
 
 	/* for CONFIG_DYNAMIC_FTRACE */
+#ifdef CONFIG_QGKI
+	struct plt_entry	*ftrace_trampolines;
+#else
 	struct plt_entry 	*ftrace_trampoline;
+#endif
 };
 #endif
 

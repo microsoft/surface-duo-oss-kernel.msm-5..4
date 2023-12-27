@@ -19,11 +19,13 @@
 #include <linux/soc/qcom/smem.h>
 #include <asm/arch_timer.h>
 #include "rpmh_master_stat.h"
+#include <linux/suspend.h>
 
 #define UNIT_DIST 0x14
 #define REG_VALID 0x0
 #define REG_DATA_LO 0x4
 #define REG_DATA_HI 0x8
+#define RPMH_LOG_BUF_SIZE 256  //MSCHANGE
 
 #define GET_ADDR(REG, UNIT_NO) (REG + (UNIT_DIST * UNIT_NO))
 
@@ -55,6 +57,11 @@ enum profile_data {
 	POWER_DOWN_END,
 	POWER_UP_START,
 	NUM_UNIT,
+};
+
+enum rpmh_log_instance {      //MSCHANGE
+	Entry,
+	Exit,
 };
 
 struct msm_rpmh_master_data {
@@ -116,6 +123,74 @@ static ssize_t msm_rpmh_master_stats_print_data(char *prvbuf, ssize_t length,
 			record->last_entered, record->last_exited,
 			accumulated_duration);
 }
+
+//MSCHANGE Start
+void log_rpmh_stats(int isExit)
+{
+	ssize_t master_index;
+	ssize_t log_offset = 0;
+	char rpmh_log_buf[RPMH_LOG_BUF_SIZE];
+	struct msm_rpmh_master_stats *record = NULL;
+    uint64_t accumulated_duration;
+
+	if(!isExit)
+		log_offset += scnprintf(rpmh_log_buf + log_offset, RPMH_LOG_BUF_SIZE - log_offset, "PM: Entry rpmh: ");
+	else
+		log_offset += scnprintf(rpmh_log_buf + log_offset, RPMH_LOG_BUF_SIZE - log_offset, "PM: Exit rpmh: ");
+
+	mutex_lock(&rpmh_stats_mutex);
+	record = &apss_master_stats;
+	accumulated_duration = record->accumulated_duration;
+
+	if (record->last_entered > record->last_exited)
+		accumulated_duration +=
+				(__arch_counter_get_cntvct()
+				- record->last_entered);
+
+	log_offset += scnprintf(rpmh_log_buf + log_offset, RPMH_LOG_BUF_SIZE - log_offset, "APSS(0x%x, 0x%llx)", record->counts, accumulated_duration);
+
+	for (master_index = 1; master_index < ARRAY_SIZE(rpmh_masters); master_index++) {
+		// master_index 0 stands for apss, which we have already logged. So skip it.
+		record = (struct msm_rpmh_master_stats *) qcom_smem_get(
+					rpmh_masters[master_index].pid,
+					rpmh_masters[master_index].smem_id, NULL);
+		if (!IS_ERR_OR_NULL(record))
+		{
+			accumulated_duration = record->accumulated_duration;
+
+			if (record->last_entered > record->last_exited)
+				accumulated_duration += (__arch_counter_get_cntvct() - record->last_entered);
+
+			// log all subsystem counts in format : subsystem_name(suspend count, suspend accumulation duration)
+			log_offset += scnprintf(rpmh_log_buf + log_offset, RPMH_LOG_BUF_SIZE - log_offset, ", %s(0x%x, 0x%llx)", rpmh_masters[master_index].master_name, record->counts, accumulated_duration);
+		}
+	}
+    mutex_unlock(&rpmh_stats_mutex);
+
+	pr_info("%s",rpmh_log_buf);
+	memset(rpmh_log_buf, 0, RPMH_LOG_BUF_SIZE);
+
+    return;
+}
+
+static int suspend_notify(struct notifier_block *nb, unsigned long mode, void *_unused)
+{
+
+	switch(mode){
+		case PM_SUSPEND_PREPARE:
+			log_rpmh_stats(Entry);
+			break;
+		case PM_POST_SUSPEND:
+			log_rpmh_stats(Exit);
+			break;
+	}
+	return 0;
+}
+
+static struct notifier_block suspend_notifier = {
+	.notifier_call = suspend_notify,
+};
+//MSCHANGE End
 
 static ssize_t msm_rpmh_master_stats_show(struct kobject *kobj,
 				struct kobj_attribute *attr, char *buf)
@@ -209,6 +284,7 @@ static int msm_rpmh_master_stats_probe(struct platform_device *pdev)
 	struct rpmh_master_stats_prv_data *prvdata = NULL;
 	struct kobject *rpmh_master_stats_kobj = NULL;
 	int ret = -ENOMEM;
+	int notify_err = 0;
 
 	prvdata = devm_kzalloc(&pdev->dev, sizeof(*prvdata), GFP_KERNEL);
 	if (!prvdata)
@@ -241,6 +317,11 @@ static int msm_rpmh_master_stats_probe(struct platform_device *pdev)
 	} else {
 		apss_master_stats.version_id = 0x1;
 	}
+	//MSCHANGE start
+	notify_err = register_pm_notifier(&suspend_notifier);
+	if (notify_err)
+		pr_err("rpmh_master_stats : Can not register suspend notifier, return %d\n", notify_err);
+	//MSCHANGE End
 
 	platform_set_drvdata(pdev, prvdata);
 	return ret;

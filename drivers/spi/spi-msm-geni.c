@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 
@@ -162,6 +163,7 @@ struct spi_geni_master {
 	int num_tx_eot;
 	int num_rx_eot;
 	int num_xfers;
+	atomic_t is_irq_enable;
 	void *ipc;
 	bool gsi_mode; /* GSI Mode */
 	bool shared_ee; /* Dual EE use case */
@@ -181,6 +183,7 @@ struct spi_geni_master {
 };
 
 static void spi_slv_setup(struct spi_geni_master *mas);
+static void spi_geni_irq_enable(struct spi_geni_master *mas, bool irq_flag);
 
 static ssize_t spi_slave_state_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
@@ -726,7 +729,8 @@ static int spi_geni_lock_bus(struct spi_master *spi)
 			dmaengine_submit(mas->gsi_lock_unlock->tx_desc);
 	dma_async_issue_pending(mas->tx);
 
-	timeout = wait_for_completion_timeout(&mas->tx_cb,
+	// MSCHANGE: make wait_for_completion interruptible
+	timeout = wait_for_completion_interruptible_timeout(&mas->tx_cb,
 					msecs_to_jiffies(SPI_XFER_TIMEOUT_MS));
 	if (timeout <= 0) {
 		GENI_SE_ERR(mas->ipc, true, mas->dev,
@@ -783,7 +787,8 @@ static void spi_geni_unlock_bus(struct spi_master *spi)
 			dmaengine_submit(mas->gsi_lock_unlock->tx_desc);
 	dma_async_issue_pending(mas->tx);
 
-	timeout = wait_for_completion_timeout(&mas->tx_cb,
+	// MSCHANGE: make wait_for_completion interruptible
+	timeout = wait_for_completion_interruptible_timeout(&mas->tx_cb,
 					msecs_to_jiffies(SPI_XFER_TIMEOUT_MS));
 	if (timeout <= 0) {
 		GENI_SE_ERR(mas->ipc, true, mas->dev,
@@ -1586,13 +1591,15 @@ static void handle_fifo_timeout(struct spi_master *spi,
 
 	/* Ensure cmd cancel is written */
 	mb();
-	timeout = wait_for_completion_timeout(&mas->xfer_done, HZ);
+	// MSCHANGE: make wait_for_completion interruptible
+	timeout = wait_for_completion_interruptible_timeout(&mas->xfer_done, HZ);
 	if (!timeout) {
 		reinit_completion(&mas->xfer_done);
 		geni_abort_m_cmd(mas->base);
 		/* Ensure cmd abort is written */
 		mb();
-		timeout = wait_for_completion_timeout(&mas->xfer_done,
+		// MSCHANGE: make wait_for_completion interruptible
+		timeout = wait_for_completion_interruptible_timeout(&mas->xfer_done,
 								HZ);
 		if (!timeout)
 			dev_err(mas->dev,
@@ -1604,8 +1611,9 @@ dma_unprep:
 			reinit_completion(&mas->xfer_done);
 			writel_relaxed(1, mas->base +
 				SE_DMA_TX_FSM_RST);
+			// MSCHANGE: make wait_for_completion interruptible
 			timeout =
-			wait_for_completion_timeout(&mas->xfer_done, HZ);
+			wait_for_completion_interruptible_timeout(&mas->xfer_done, HZ);
 			if (!timeout)
 				dev_err(mas->dev,
 					"DMA TX RESET failed\n");
@@ -1616,8 +1624,9 @@ dma_unprep:
 			reinit_completion(&mas->xfer_done);
 			writel_relaxed(1, mas->base +
 				SE_DMA_RX_FSM_RST);
+			// MSCHANGE: make wait_for_completion interruptible
 			timeout =
-			wait_for_completion_timeout(&mas->xfer_done, HZ);
+			wait_for_completion_interruptible_timeout(&mas->xfer_done, HZ);
 			if (!timeout)
 				dev_err(mas->dev,
 					"DMA RX RESET failed\n");
@@ -1681,7 +1690,8 @@ static int spi_geni_transfer_one(struct spi_master *spi,
 
 		if (spi->slave)
 			mas->slave_state = true;
-		timeout = wait_for_completion_timeout(&mas->xfer_done,
+		// MSCHANGE: make wait_for_completion interruptible
+		timeout = wait_for_completion_interruptible_timeout(&mas->xfer_done,
 					xfer_timeout);
 		if (spi->slave)
 			mas->slave_state = false;
@@ -1725,8 +1735,9 @@ static int spi_geni_transfer_one(struct spi_master *spi,
 			int i;
 
 			for (i = 0 ; i < mas->num_tx_eot; i++) {
+				// MSCHANGE: make wait_for_completion interruptible
 				timeout =
-				wait_for_completion_timeout(
+				wait_for_completion_interruptible_timeout(
 					&mas->tx_cb, xfer_timeout);
 				if (timeout <= 0) {
 					GENI_SE_ERR(mas->ipc, true, mas->dev,
@@ -1736,8 +1747,9 @@ static int spi_geni_transfer_one(struct spi_master *spi,
 				}
 			}
 			for (i = 0 ; i < mas->num_rx_eot; i++) {
+				// MSCHANGE: make wait_for_completion interruptible
 				timeout =
-				wait_for_completion_timeout(
+				wait_for_completion_interruptible_timeout(
 					&mas->rx_cb, xfer_timeout);
 				if (timeout <= 0) {
 					GENI_SE_ERR(mas->ipc, true, mas->dev,
@@ -2087,6 +2099,8 @@ static int spi_geni_probe(struct platform_device *pdev)
 		}
 	}
 
+	atomic_set(&geni_mas->is_irq_enable, 0);
+
 	ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
 	if (ret) {
 		ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
@@ -2230,12 +2244,12 @@ static int spi_geni_runtime_suspend(struct device *dev)
 	struct spi_master *spi = get_spi_master(dev);
 	struct spi_geni_master *geni_mas = spi_master_get_devdata(spi);
 
-	disable_irq(geni_mas->irq);
 	if (geni_mas->is_le_vm) {
 		spi_geni_unlock_bus(spi);
 		return 0;
 	}
 
+	spi_geni_irq_enable(geni_mas, false);
 	GENI_SE_DBG(geni_mas->ipc, false, NULL, "%s:\n", __func__);
 	/* Do not unconfigure the GPIOs for a shared_se usecase */
 	if (geni_mas->shared_ee && !geni_mas->shared_se)
@@ -2295,7 +2309,7 @@ static int spi_geni_runtime_resume(struct device *dev)
 
 exit_rt_resume:
 	ret = se_geni_resources_on(&geni_mas->spi_rsc);
-	enable_irq(geni_mas->irq);
+	spi_geni_irq_enable(geni_mas, true);
 	return ret;
 }
 
@@ -2341,6 +2355,41 @@ static int spi_geni_suspend(struct device *dev)
 	return 0;
 }
 #endif
+
+/**
+ * spi_geni_irq_enable() - Enable or Disable irq.
+ * @mas: Pointer to spi_geni_master structure.
+ * @irq_flag: irq flag which indicates irq enable
+ *            or disable
+ *            irq_flag - false - irq disable
+ *            irq_flag - true  - irq enable.
+ *
+ * This function is used to enable or disable irq.
+ * Based on irq_flag the enabling or disabling of
+ * irq will be done. Enable if irq_flag is true,
+ * disable if irq_flag is false.
+ * Return: None.
+ */
+static void spi_geni_irq_enable(struct spi_geni_master *mas, bool irq_flag)
+{
+	if (irq_flag) {
+		if (!(atomic_read(&mas->is_irq_enable))) {
+			enable_irq(mas->irq);
+			atomic_set(&mas->is_irq_enable, 1);
+		} else {
+			GENI_SE_DBG(mas->ipc, true, mas->dev,
+				    "%s: irq already enabled\n", __func__);
+		}
+	} else {
+		if (atomic_read(&mas->is_irq_enable)) {
+			disable_irq(mas->irq);
+			atomic_set(&mas->is_irq_enable, 0);
+		} else {
+			GENI_SE_DBG(mas->ipc, true, mas->dev,
+				    "%s: irq already disabled\n", __func__);
+		}
+	}
+}
 
 static const struct dev_pm_ops spi_geni_pm_ops = {
 	SET_RUNTIME_PM_OPS(spi_geni_runtime_suspend,
