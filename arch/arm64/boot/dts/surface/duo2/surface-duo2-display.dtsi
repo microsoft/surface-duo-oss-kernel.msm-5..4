@@ -1,0 +1,121 @@
+/*
+ * Copyright (c) 2020 Microsoft Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
+ */
+
+&tlmm {
+    /* For External trigger */
+	pmx_sde_ext_trig: pmx_sde_ext_trig {
+		sde_ext_trig_on: sde_ext_trig_on {
+			mux {
+				pins = "gpio52";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio52";
+				drive-strength = <8>;   /* 8 mA */
+				bias-disable = <0>;   /* no pull */
+			};
+		};
+
+		sde_ext_trig_off: sde_ext_trig_off {
+			mux {
+				pins = "gpio52";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio52";
+				drive-strength = <2>;   /* 2 mA */
+				bias-pull-down;         /* PULL DOWN */
+			};
+		};
+
+		sde_ext_trig1_on: sde_ext_trig1_on {
+			mux {
+				pins = "gpio53";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio53";
+				drive-strength = <8>;   /* 8 mA */
+				bias-disable = <0>;   /* no pull */
+			};
+		};
+
+		sde_ext_trig1_off: sde_ext_trig1_off {
+			mux {
+				pins = "gpio53";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio53";
+				drive-strength = <2>;   /* 2 mA */
+				bias-pull-down;         /* PULL DOWN */
+			};
+		};
+	};
+    /* For Silego */
+    pmx_silego: pmx_silego {
+		silego_freq_force_on: silego_freq_force_on {
+			mux {
+				pins = "gpio166";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio166";
+				drive-strength = <8>;   /* 8 mA */
+				bias-disable = <0>;   /* no pull */
+			};
+		};
+
+		silego_freq_force_off: silego_freq_force_off {
+			mux {
+				pins = "gpio166";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio166";
+				drive-strength = <2>;   /* 2 mA */
+				bias-pull-down;         /* PULL DOWN */
+			};
+		};
+		silego_freq_select_on: silego_freq_select_on {
+			mux {
+				pins = "gpio167";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio167";
+				drive-strength = <8>;   /* 8 mA */
+				bias-disable = <0>;   /* no pull */
+			};
+		};
+
+		silego_freq_select_off: silego_freq_select_off {
+			mux {
+				pins = "gpio167";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio167";
+				drive-strength = <2>;   /* 2 mA */
+				bias-pull-down;         /* PULL DOWN */
+			};
+		};
+	};
+};
+
+&qupv3_se8_i2c {
+    status = "ok";
+};

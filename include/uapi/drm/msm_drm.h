@@ -67,6 +67,15 @@ struct drm_msm_timespec {
 	__s64 tv_nsec;         /* nanoseconds */
 };
 
+/* MSCHANGE start*/
+#define DRM_MSM_PRIV_INFO
+struct drm_msm_priv_info {
+	__u32 always_on_enable;
+	__u32 elvss_enable;
+	__u32 tandem_mode;
+};
+/* MSCHANGE end*/
+
 #define MSM_PARAM_GPU_ID     0x01
 #define MSM_PARAM_GMEM_SIZE  0x02
 #define MSM_PARAM_CHIP_ID    0x03

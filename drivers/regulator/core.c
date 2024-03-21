@@ -978,7 +978,7 @@ static int drms_uA_update(struct regulator_dev *rdev)
 		/* get input voltage */
 		input_uV = 0;
 		if (rdev->supply)
-			input_uV = regulator_get_voltage(rdev->supply);
+			input_uV = regulator_get_voltage_rdev(rdev->supply->rdev);
 		if (input_uV <= 0)
 			input_uV = rdev->constraints->input_uV;
 		if (input_uV <= 0) {
@@ -1409,7 +1409,13 @@ static int set_machine_constraints(struct regulator_dev *rdev)
 		if (rdev->supply_name && !rdev->supply)
 			return -EPROBE_DEFER;
 
-		if (rdev->supply) {
+		/* If supplying regulator has already been enabled,
+		 * it's not intended to have use_count increment
+		 * when rdev is only boot-on.
+		 */
+		if (rdev->supply &&
+		    (rdev->constraints->always_on ||
+		     !regulator_is_enabled(rdev->supply))) {
 			ret = regulator_enable(rdev->supply);
 			if (ret < 0) {
 				_regulator_put(rdev->supply);
@@ -1453,6 +1459,7 @@ static int set_supply(struct regulator_dev *rdev,
 
 	rdev->supply = create_regulator(supply_rdev, &rdev->dev, "SUPPLY");
 	if (rdev->supply == NULL) {
+		module_put(supply_rdev->owner);
 		err = -ENOMEM;
 		return err;
 	}
@@ -1626,7 +1633,7 @@ static struct regulator *create_regulator(struct regulator_dev *rdev,
 
 	regulator = kzalloc(sizeof(*regulator), GFP_KERNEL);
 	if (regulator == NULL) {
-		kfree(supply_name);
+		kfree_const(supply_name);
 		return NULL;
 	}
 
@@ -1756,6 +1763,7 @@ static struct regulator_dev *regulator_dev_lookup(struct device *dev,
 		node = of_get_regulator(dev, supply);
 		if (node) {
 			r = of_find_regulator_by_node(node);
+			of_node_put(node);
 			if (r)
 				return r;
 
@@ -2011,10 +2019,13 @@ struct regulator *_regulator_get(struct device *dev, const char *id,
 		rdev->exclusive = 1;
 
 		ret = _regulator_is_enabled(rdev);
-		if (ret > 0)
+		if (ret > 0) {
 			rdev->use_count = 1;
-		else
+			regulator->enable_count = 1;
+		} else {
 			rdev->use_count = 0;
+			regulator->enable_count = 0;
+		}
 	}
 
 	link = device_link_add(dev, &rdev->dev, DL_FLAG_STATELESS);
@@ -2509,13 +2520,18 @@ static int _regulator_do_enable(struct regulator_dev *rdev)
  */
 static int _regulator_handle_consumer_enable(struct regulator *regulator)
 {
+	int ret;
 	struct regulator_dev *rdev = regulator->rdev;
 
 	lockdep_assert_held_once(&rdev->mutex.base);
 
 	regulator->enable_count++;
-	if (regulator->uA_load && regulator->enable_count == 1)
-		return drms_uA_update(rdev);
+	if (regulator->uA_load && regulator->enable_count == 1) {
+		ret = drms_uA_update(rdev);
+		if (ret)
+			regulator->enable_count--;
+		return ret;
+	}
 
 	return 0;
 }
@@ -4834,6 +4850,7 @@ static void regulator_dev_release(struct device *dev)
 {
 	struct regulator_dev *rdev = dev_get_drvdata(dev);
 
+	debugfs_remove_recursive(rdev->debugfs);
 	kfree(rdev->constraints);
 	of_node_put(rdev->dev.of_node);
 	kfree(rdev);
@@ -5673,15 +5690,20 @@ unset_supplies:
 	regulator_remove_coupling(rdev);
 	mutex_unlock(&regulator_list_mutex);
 wash:
+	regulator_put(rdev->supply);
 	kfree(rdev->coupling_desc.coupled_rdevs);
 	mutex_lock(&regulator_list_mutex);
 	regulator_ena_gpio_free(rdev);
 	mutex_unlock(&regulator_list_mutex);
+	put_device(&rdev->dev);
+	rdev = NULL;
 clean:
 	if (dangling_of_gpiod)
 		gpiod_put(config->ena_gpiod);
+	if (rdev && rdev->dev.of_node)
+		of_node_put(rdev->dev.of_node);
+	kfree(rdev);
 	kfree(config);
-	put_device(&rdev->dev);
 rinse:
 	if (dangling_cfg_gpiod)
 		gpiod_put(cfg->ena_gpiod);
@@ -5711,7 +5733,6 @@ void regulator_unregister(struct regulator_dev *rdev)
 
 	mutex_lock(&regulator_list_mutex);
 
-	debugfs_remove_recursive(rdev->debugfs);
 	WARN_ON(rdev->open_count);
 	regulator_remove_coupling(rdev);
 	unset_regulator_supplies(rdev);
@@ -6108,7 +6129,7 @@ static int regulator_summary_show(struct seq_file *s, void *data)
 DEFINE_SHOW_ATTRIBUTE(regulator_summary);
 #endif /* CONFIG_DEBUG_FS */
 
-#ifdef CONFIG_REGULATOR_QTI_DEBUG
+#if defined(CONFIG_REGULATOR_QTI_DEBUG) || defined(CONFIG_REGULATOR_SURFACE_DEBUG)
 static int _regulator_debug_print_enabled(struct device *dev, void *data)
 {
 	struct regulator_dev *rdev = dev_to_rdev(dev);
@@ -6126,33 +6147,39 @@ static int _regulator_debug_print_enabled(struct device *dev, void *data)
 		mode = rdev->desc->ops->get_mode(rdev);
 
 	if (uV != -EPERM && mode != -EPERM)
-		pr_info("%s[%u] %d uV, mode=%d\n",
+		pr_info("## %s[%u] %d uV, mode=%d\n",
 			rdev_get_name(rdev), rdev->use_count, uV, mode);
 	else if (uV != -EPERM)
-		pr_info("%s[%u] %d uV\n",
+		pr_info("## %s[%u] %d uV\n",
 			rdev_get_name(rdev), rdev->use_count, uV);
 	else if (mode != -EPERM)
-		pr_info("%s[%u], mode=%d\n",
+		pr_info("## %s[%u], mode=%d\n",
 			rdev_get_name(rdev), rdev->use_count, mode);
 	else
-		pr_info("%s[%u]\n", rdev_get_name(rdev), rdev->use_count);
+		pr_info("## %s[%u]\n", rdev_get_name(rdev), rdev->use_count);
 
 	/* Print a header if there are consumers. */
+	//MSCHANGE removing header print for every rdev. We will print header only once in function "regulator_debug_print_enabled()".
+	/*
 	if (rdev->open_count)
-		pr_info("  %-32s EN    Min_uV   Max_uV  load_uA\n",
+		pr_info("##  %-32s EN    Min_uV   Max_uV  load_uA\n",
 			"Device-Supply");
-
+	*/
 	list_for_each_entry(reg, &rdev->consumer_list, list) {
-		if (reg->supply_name)
-			supply_name = reg->supply_name;
-		else
-			supply_name = "(null)-(null)";
+		if (reg->enable_count) // MSCHANGE to print only enabled regulator consumer.
+		{
+			if (reg->supply_name)
+				supply_name = reg->supply_name;
+			else
+				supply_name = "(null)-(null)";
 
-		pr_info("  %-32s %d   %8d %8d %8d\n", supply_name,
-			reg->enable_count,
-			reg->voltage[PM_SUSPEND_ON].min_uV,
-			reg->voltage[PM_SUSPEND_ON].max_uV,
-			reg->uA_load);
+			pr_info("##  %-32s %d   %8d %8d %8d\n", supply_name,
+				reg->enable_count,
+				reg->voltage[PM_SUSPEND_ON].min_uV,
+				reg->voltage[PM_SUSPEND_ON].max_uV,
+				reg->uA_load);
+			*(int *)data += 1; // MSCHANGE to increment total Enabled Regulator count by one.
+		}
 	}
 
 	return 0;
@@ -6166,15 +6193,22 @@ static int _regulator_debug_print_enabled(struct device *dev, void *data)
  */
 void regulator_debug_print_enabled(void)
 {
+	int enabled_reg_count = 0;  // MSCHANGE
+	//MSCHANGE to always print regulators enabled during suspend.
+	/*
 	if (likely(!debug_suspend))
 		return;
+	*/
 
 	pr_info("Enabled regulators:\n");
-	class_for_each_device(&regulator_class, NULL, NULL,
+	pr_info("##  %-32s EN    Min_uV   Max_uV  load_uA\n",
+			"Device-Supply"); // MSCHANGE to print header.
+	class_for_each_device(&regulator_class, NULL, &enabled_reg_count,
 			     _regulator_debug_print_enabled);
+	pr_info("Total enabled regulators count: %d", enabled_reg_count); // MSCHANGE to log Enabled Regulators count.
 }
 EXPORT_SYMBOL(regulator_debug_print_enabled);
-#endif /* CONFIG_REGULATOR_QTI_DEBUG */
+#endif /* CONFIG_REGULATOR_QTI_DEBUG  or CONFIG_REGULATOR_SURFACE_DEBUG*/
 
 static int __init regulator_init(void)
 {

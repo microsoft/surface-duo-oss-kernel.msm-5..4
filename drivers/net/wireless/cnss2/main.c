@@ -2865,6 +2865,24 @@ static ssize_t hw_trace_override_store(struct device *dev,
 	return count;
 }
 
+/* MSCHANGE Start */
+static ssize_t bdf_version_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	struct cnss_plat_data *plat_priv = dev_get_drvdata(dev);
+	return sprintf(buf, "%d\n", plat_priv->bdf.version);
+}
+
+static ssize_t bdf_checksum_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	struct cnss_plat_data *plat_priv = dev_get_drvdata(dev);
+	return sprintf(buf, "%d\n", plat_priv->bdf.checksum);
+}
+/* MSCHANGE End */
+
 static DEVICE_ATTR_WO(fs_ready);
 static DEVICE_ATTR_WO(shutdown);
 static DEVICE_ATTR_WO(recovery);
@@ -2873,6 +2891,10 @@ static DEVICE_ATTR_WO(qdss_trace_start);
 static DEVICE_ATTR_WO(qdss_trace_stop);
 static DEVICE_ATTR_WO(qdss_conf_download);
 static DEVICE_ATTR_WO(hw_trace_override);
+/* MSCHANGE Start */
+static DEVICE_ATTR_RO(bdf_version);
+static DEVICE_ATTR_RO(bdf_checksum);
+/* MSCHANGE End */
 
 static struct attribute *cnss_attrs[] = {
 	&dev_attr_fs_ready.attr,
@@ -2883,6 +2905,10 @@ static struct attribute *cnss_attrs[] = {
 	&dev_attr_qdss_trace_stop.attr,
 	&dev_attr_qdss_conf_download.attr,
 	&dev_attr_hw_trace_override.attr,
+	/* MSCHANGE Start */
+	&dev_attr_bdf_version.attr,
+	&dev_attr_bdf_checksum.attr,
+	/* MSCHANGE End */
 	NULL,
 };
 
@@ -3134,6 +3160,27 @@ cnss_is_converged_dt(struct cnss_plat_data *plat_priv)
 	return of_property_read_bool(plat_priv->plat_dev->dev.of_node,
 				     "qcom,converged-dt");
 }
+
+int cnss_set_wfc_mode(struct device *dev, struct cnss_wfc_cfg cfg)
+{
+	struct cnss_plat_data *plat_priv = cnss_bus_dev_to_plat_priv(dev);
+	int ret = 0;
+
+	if (!plat_priv)
+		return -ENODEV;
+
+	/* If IMS server is connected, return success without QMI send */
+	if (test_bit(CNSS_IMS_CONNECTED, &plat_priv->driver_state)) {
+		cnss_pr_dbg("Ignore host request as IMS server is connected");
+		return ret;
+	}
+
+	ret = cnss_wlfw_send_host_wfc_call_status(plat_priv, cfg);
+
+	return ret;
+}
+EXPORT_SYMBOL(cnss_set_wfc_mode);
+
 static int cnss_probe(struct platform_device *plat_dev)
 {
 	int ret = 0;

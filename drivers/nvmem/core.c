@@ -17,6 +17,7 @@
 #include <linux/nvmem-provider.h>
 #include <linux/of.h>
 #include <linux/slab.h>
+#include <linux/sysfs.h> //MSCHANGE, for eliminating lockdep() warning message
 #include "nvmem.h"
 
 struct nvmem_cell {
@@ -161,6 +162,9 @@ static void nvmem_cell_add(struct nvmem_cell *cell)
 
 #ifdef CONFIG_QCOM_QFPROM_SYSFS
 	/* add attr for this cell */
+	//MSCHANGE Start, for eliminating lockdep() warning message
+	sysfs_bin_attr_init(nvmem_cell_attr);
+	//MSCHANGE End
 	nvmem_cell_attr->attr.name = cell->name;
 	nvmem_cell_attr->attr.mode = 0444;
 	nvmem_cell_attr->private = cell;
@@ -484,7 +488,7 @@ struct nvmem_device *nvmem_register(const struct nvmem_config *config)
 	if (config->cells) {
 		rval = nvmem_add_cells(nvmem, config->cells, config->ncells);
 		if (rval)
-			goto err_teardown_compat;
+			goto err_remove_cells;
 	}
 
 	rval = nvmem_add_cells_from_table(nvmem);
@@ -501,7 +505,6 @@ struct nvmem_device *nvmem_register(const struct nvmem_config *config)
 
 err_remove_cells:
 	nvmem_device_remove_all_cells(nvmem);
-err_teardown_compat:
 	if (config->compat)
 		nvmem_sysfs_remove_compat(nvmem, config);
 err_device_del:
@@ -999,7 +1002,8 @@ static void nvmem_shift_read_buffer_in_place(struct nvmem_cell *cell, void *buf)
 		*p-- = 0;
 
 	/* clear msb bits if any leftover in the last byte */
-	*p &= GENMASK((cell->nbits%BITS_PER_BYTE) - 1, 0);
+	if (cell->nbits % BITS_PER_BYTE)
+		*p &= GENMASK((cell->nbits % BITS_PER_BYTE) - 1, 0);
 }
 
 static int __nvmem_cell_read(struct nvmem_device *nvmem,

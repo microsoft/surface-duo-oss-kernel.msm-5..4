@@ -16,6 +16,10 @@
 
 /* owner/type/opcodes for battery debug */
 #define MSG_OWNER_BD			32781
+#define MSG_OWNER_BC			32778  //MSCHANGE
+#define BATTMAN_LOG_LEVEL_DEBUG  4 //MSCHANGE
+#define ChargerPDLoggingCategories 8405537 //MSCHANGE
+#define MS_SET_LOGGING_PROP_REQ  0x19  //MSCHANGE
 #define MSG_TYPE_REQ_RESP		1
 #define BD_GET_AGGREGATOR_INFO_REQ	0x15
 #define BD_OVERWRITE_VOTABLE_REQ	0x16
@@ -29,6 +33,31 @@
 #define MAX_NUM_VOTABLES	12
 #define MAX_NUM_VOTERS		32
 #define MAX_NAME_LEN		12
+
+// MSCHANGE Start
+#define MS_DEFAULT_ADSP_LOG_FETCH_TIME_INTERVAL  60 // 1 minute
+#define BATT_MNGR_GET_ULOG_REQ		0x0018
+#define MAX_ULOG_READ_BUFFER_SIZE	8192			// 8MB
+#define MAX_MSG_LENGTH				251
+
+/** request Message; to get ulogs from chargerPD */
+struct battman_get_log_req_msg{
+  struct pmic_glink_hdr hdr;
+  u32 max_logsize;
+};
+
+/** Response Message; to get ulogs from chargerPD */
+struct battman_get_log_resp_msg{
+  struct pmic_glink_hdr hdr;
+  char read_buffer[MAX_ULOG_READ_BUFFER_SIZE];
+};
+
+struct set_log_properties_req_msg{
+  struct pmic_glink_hdr hdr;
+  u64 	categories;
+  u32 	level;
+};
+// MSCHANGE End
 
 struct all_votables_data {
 	u32			num_votables;
@@ -101,6 +130,9 @@ struct battery_dbg_dev {
 	struct all_votables_data	all_data;
 	struct votable			*votable;
 	u8				override_voter_id;
+	struct workqueue_struct     *ms_adsp_log_fetch_wq; //MSCHANGE start
+	struct delayed_work			ms_adsp_log_fetch_work;
+	u16 						ms_adsp_log_fetch_time_interval; //MSCHANGE end
 };
 
 static int battery_dbg_write(struct battery_dbg_dev *bd, void *data, size_t len)
@@ -125,6 +157,101 @@ static int battery_dbg_write(struct battery_dbg_dev *bd, void *data, size_t len)
 
 	return rc;
 }
+
+// MSCHANGE Start
+static void parse_chargerPD_logs(char * received_buff)
+{
+	size_t received_buff_size = 0;
+	char received_buff_modified[256];
+	u32 buff_index = 0, counter = 0, copy_size = 0;
+
+	received_buff_size= strlen(received_buff);
+
+	if(received_buff_size == 0){
+	  pr_debug("ChargerPD Ulog is Empty");
+	  return;
+    }
+
+    pr_debug("****Received ChargerPD Logs of size %d****", received_buff_size);
+
+    while(counter < received_buff_size){
+      if(received_buff[counter] == '\n' || received_buff[counter] == '\0'){
+        copy_size = (counter - buff_index) + 1;
+        if(copy_size<MAX_MSG_LENGTH){
+          memset(received_buff_modified, '\0', 256);
+          strlcpy(received_buff_modified, &received_buff[buff_index], copy_size); //Strlcpy copies 1 byte less than the #of bytes specified
+          pr_info("%s", received_buff_modified);  //(copy_size+1) will copy '\n' from the ulog. So no need for including '\n' while printing
+		  buff_index += copy_size;
+        }
+        else{
+          while(buff_index < counter){
+            copy_size = (copy_size > MAX_MSG_LENGTH) ? MAX_MSG_LENGTH : (counter - buff_index)+1;
+            memset(received_buff_modified, '\0', 256);
+            if(copy_size<256)
+            {
+              strlcpy(received_buff_modified, &received_buff[buff_index], copy_size); //Strlcpy copies 1 byte less than the #of bytes specified
+              pr_info("%s", received_buff_modified);
+              buff_index += (copy_size-1);
+            }
+            copy_size = (counter - buff_index)+1;
+          }
+        }
+      }
+      counter++;
+    }
+}
+
+static void handle_get_logs_message(struct battery_dbg_dev *bd,
+						struct battman_get_log_resp_msg *resp_msg,
+						size_t len)
+{
+	if (len != sizeof(*resp_msg)) {
+		pr_err("Expected data length: %zu, received: %zu\n",
+				sizeof(*resp_msg), len);
+		return;
+	}
+	parse_chargerPD_logs(resp_msg->read_buffer);
+	complete(&bd->ack);
+}
+
+static int battery_dbg_get_logs(struct battery_dbg_dev *bd)
+{
+	struct battman_get_log_req_msg req_msg = { {0} };
+	req_msg.hdr.owner = MSG_OWNER_BC;
+	req_msg.hdr.type = MSG_TYPE_REQ_RESP;
+	req_msg.hdr.opcode = BATT_MNGR_GET_ULOG_REQ;
+	req_msg.max_logsize = MAX_ULOG_READ_BUFFER_SIZE;
+
+	return battery_dbg_write(bd, &req_msg, sizeof(req_msg));
+}
+
+static int write_log_categories(void *data , u64 val){
+	struct battery_dbg_dev *bd = data;
+	struct set_log_properties_req_msg req_msg = { { 0 } };
+
+	req_msg.hdr.owner = MSG_OWNER_BC;
+	req_msg.hdr.type = MSG_TYPE_REQ_RESP;
+	req_msg.hdr.opcode = MS_SET_LOGGING_PROP_REQ;
+	req_msg.categories = val;
+	req_msg.level = BATTMAN_LOG_LEVEL_DEBUG;
+
+	return battery_dbg_write(bd, &req_msg, sizeof(req_msg));
+}
+
+static int log_categories_write(void *data, u64 val)
+{
+	return write_log_categories(data,val);
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(log_categories_ops, NULL,
+			log_categories_write, "%d\n");
+
+static void ms_adsp_log_fetch_work_function(struct work_struct *work) {
+	struct battery_dbg_dev *bd = container_of(work, struct battery_dbg_dev, ms_adsp_log_fetch_work.work);
+	battery_dbg_get_logs(bd);
+	queue_delayed_work(bd->ms_adsp_log_fetch_wq, &bd->ms_adsp_log_fetch_work, bd->ms_adsp_log_fetch_time_interval * HZ);
+}
+// MSCHANGE End
 
 static void handle_qbg_dump_message(struct battery_dbg_dev *bd,
 				    struct qbg_context_resp_msg *resp_msg,
@@ -255,6 +382,15 @@ static int battery_dbg_callback(void *priv, void *data, size_t len)
 	case BD_OVERWRITE_VOTABLE_REQ:
 		handle_override_message(bd, data, len);
 		break;
+	// MSCHANGE Start
+	case BATT_MNGR_GET_ULOG_REQ:
+		// Handle the logs
+		handle_get_logs_message(bd, data, len);
+		break;
+	case MS_SET_LOGGING_PROP_REQ:
+		complete(&bd->ack);
+	break;
+	// MSCHANGE End
 	default:
 		pr_err("Unknown opcode %u\n", hdr->opcode);
 		break;
@@ -626,10 +762,28 @@ static int battery_dbg_create_votables(struct battery_dbg_dev *bd,
 	return 0;
 }
 
+// MSCHANGE start
+static int ms_adsp_log_fetch_time_interval_read(void *data , u64 *val) {
+	struct battery_dbg_dev *bd = data;
+	*val = bd->ms_adsp_log_fetch_time_interval;
+	return 0;
+}
+
+static int ms_adsp_log_fetch_time_interval_write(void *data, u64 val) {
+	struct battery_dbg_dev *bd = data;
+	bd->ms_adsp_log_fetch_time_interval = (u16) val;
+	cancel_delayed_work_sync(&bd->ms_adsp_log_fetch_work);
+	queue_delayed_work(bd->ms_adsp_log_fetch_wq, &bd->ms_adsp_log_fetch_work, 0);
+	return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(ms_adsp_log_fetch_time_interval_ops, ms_adsp_log_fetch_time_interval_read,
+			ms_adsp_log_fetch_time_interval_write, "%d\n");
+
+// MSCHANGE end
 static void battery_dbg_add_debugfs(struct battery_dbg_dev *bd)
 {
 	int rc;
-	struct dentry *bd_dir;
+	struct dentry *bd_dir, *file;	// MSCHANGE
 
 	bd_dir = debugfs_create_dir("battery_debug", NULL);
 	if (IS_ERR(bd_dir)) {
@@ -637,6 +791,22 @@ static void battery_dbg_add_debugfs(struct battery_dbg_dev *bd)
 		pr_err("Failed to create battery debugfs directory: %d\n", rc);
 		return;
 	}
+//MSCHANGE Start
+	file = debugfs_create_file("log_categories", 0600, bd_dir, bd, &log_categories_ops);
+	if (IS_ERR(file)) {
+		rc = PTR_ERR(file);
+		pr_err("Failed to create log_categories file, rc=%d\n", rc);
+		goto error;
+	}
+
+	file = debugfs_create_file("log_fetch_time_interval", 0600, bd_dir, bd, &ms_adsp_log_fetch_time_interval_ops);
+	if (IS_ERR(file)) {
+		rc = PTR_ERR(file);
+		pr_err("Failed to create log_fetch_time_interval file, rc=%d\n",
+			rc);
+		goto error;
+	}
+// MSCHANGE end
 
 	rc = battery_dbg_create_votables(bd, bd_dir);
 	if (rc) {
@@ -736,13 +906,23 @@ static int battery_dbg_probe(struct platform_device *pdev)
 	mutex_init(&bd->lock);
 	init_completion(&bd->ack);
 	platform_set_drvdata(pdev, bd);
-
 	rc = battery_dbg_add_dev_attr(bd);
 	if (rc < 0)
 		goto out;
 
+// MSCHANGE start
+	INIT_DELAYED_WORK(&bd->ms_adsp_log_fetch_work, ms_adsp_log_fetch_work_function);
+	bd->ms_adsp_log_fetch_wq = create_workqueue("adsp_log_fetch_wq");
+	if (bd->ms_adsp_log_fetch_wq == NULL) {
+		dev_err(bd->dev, "Error in creating adsp_log_fetch_wq \n");
+		rc = -ENOMEM;
+		goto out;
+	}
+	bd->ms_adsp_log_fetch_time_interval = MS_DEFAULT_ADSP_LOG_FETCH_TIME_INTERVAL;
+	queue_delayed_work(bd->ms_adsp_log_fetch_wq, &bd->ms_adsp_log_fetch_work, 0);
+// MSCHANGE end
 	battery_dbg_add_debugfs(bd);
-
+	write_log_categories(bd,ChargerPDLoggingCategories); //MSCHANGE
 	return 0;
 out:
 	pmic_glink_unregister_client(bd->client);
@@ -755,6 +935,10 @@ static int battery_dbg_remove(struct platform_device *pdev)
 	int rc;
 
 	debugfs_remove_recursive(bd->debugfs_dir);
+// MSCHANGE start
+	cancel_delayed_work_sync(&bd->ms_adsp_log_fetch_work);
+	destroy_workqueue(bd->ms_adsp_log_fetch_wq);
+// MSCHANGE end
 	rc = pmic_glink_unregister_client(bd->client);
 	if (rc < 0) {
 		pr_err("Error unregistering from pmic_glink, rc=%d\n", rc);

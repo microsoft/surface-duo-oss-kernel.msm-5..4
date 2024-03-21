@@ -35,3 +35,4 @@ obj-y				+= imx/
 obj-y				+= tegra/
 obj-y				+= xilinx/
 obj-$(CONFIG_QTI_TZ_LOG)	+= qcom/
+obj-$(CONFIG_SURFACE_FIRMWARE)  += surface/

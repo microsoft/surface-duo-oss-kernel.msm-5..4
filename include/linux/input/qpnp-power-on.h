@@ -55,6 +55,13 @@ enum pon_restart_reason {
 	PON_RESTART_REASON_DMVERITY_CORRUPTED	= 0x04,
 	PON_RESTART_REASON_DMVERITY_ENFORCE	= 0x05,
 	PON_RESTART_REASON_KEYS_CLEAR		= 0x06,
+	// MSCHANGE must be kept in sync with /QcomModulePkg/Include/Library/ShutdownServices.h
+	OEM_BATTERY_SHIP_MODE = 0x21, 						 // MSCHANGE enabling shipmode
+	OEM_BATTERY_RNR_MODE = 0x22, 						 // MSCHANGE enabling RnRmode
+	OEM_KERNEL_PANIC = 0x23,							 // MSCHANGE adding kernel panic reset reason
+	OEM_BATTERY_DRIVER_TRIGGERED_RSOC_IMBALANCE = 0x24,  // MSCHANGE adding battery driver triggered reset reason RSOC imbalance
+	OEM_BATTERY_DRIVER_TRIGGERED_FG_FAULT_OVP = 0x25,    // MSCHANGE adding battery driver triggered reset reason OVP
+	OEM_BATTERY_DRIVER_TRIGGERED_FG_FAULT_OT = 0x26,     // MSCHANGE adding battery driver triggered reset reason OT
 };
 
 #if IS_ENABLED(CONFIG_INPUT_QPNP_POWER_ON)
